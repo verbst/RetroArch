@@ -703,6 +703,24 @@ static void gfx_ctx_wgl_input_driver(void *data,
 {
    settings_t *settings     = config_get_ptr();
 
+#ifdef HAVE_MISTER
+   /* The MiSTer streams its own keyboard and mouse. Checked before the
+    * platform drivers because on Windows the context driver, not the input
+    * subsystem, has the final say on which input driver is used - so without
+    * this the setting is silently overridden and RetroArch reports that the
+    * graphics driver picked one for us. */
+   if (string_is_equal(settings->arrays.input_driver, "mister"))
+   {
+      *input_data = input_driver_init_wrap(&input_mister, joypad_name);
+      if (*input_data)
+      {
+         *input  = &input_mister;
+         dinput_wgl = NULL;
+         return;
+      }
+   }
+#endif
+
 #if _WIN32_WINNT >= 0x0501
 #ifdef HAVE_WINRAWINPUT
    const char *input_driver = settings->arrays.input_driver;

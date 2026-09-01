@@ -55,6 +55,9 @@
 #include "../../verbosity.h"
 #include "../../paths.h"
 #include "../../retroarch.h"
+#ifdef HAVE_MISTER
+#include "../gfx_mister.h"
+#endif
 #include "../../tasks/task_content.h"
 #include "../../tasks/tasks_internal.h"
 #include "../../core_info.h"
@@ -504,6 +507,17 @@ static void win32_get_av_info_geometry(unsigned *width, unsigned *height)
    *height                        = video_st->av_info.geometry.base_height;
 }
 
+#ifdef HAVE_MISTER
+/* Arbitrary, just has to not collide with another timer on this window. The
+ * period is well inside the core's default 5 s idle timeout. */
+#define WIN32_MISTER_KEEPALIVE_TIMER 0x4D53
+#define WIN32_MISTER_KEEPALIVE_MS    1000
+
+/* Counted so the log can say whether the timer ran at all, which is the first
+ * thing worth knowing if a session is lost to a modal window again. */
+static unsigned win32_mister_modal_ticks;
+#endif
+
 static LRESULT CALLBACK wnd_proc_common(
       bool *quit, HWND hwnd, UINT message,
       WPARAM wparam, LPARAM lparam)
@@ -518,6 +532,46 @@ static LRESULT CALLBACK wnd_proc_common(
 
    switch (message)
    {
+#ifdef HAVE_MISTER
+      /* Opening a menu, or dragging or resizing the window, runs a modal
+       * message loop inside USER32 that does not return until the user is
+       * finished. runloop_iterate never completes for as long as that lasts,
+       * so the MiSTer keepalive stops and the core's idle timeout tears the
+       * session down after a few seconds - which is why picking something off
+       * the menu bar used to kill the stream.
+       *
+       * A timer keeps being dispatched inside that modal loop, on this same
+       * thread, which is the one way to keep talking to the core while it
+       * owns the stack. */
+      case WM_ENTERMENULOOP:
+      case WM_ENTERSIZEMOVE:
+         win32_mister_modal_ticks = 0;
+         if (SetTimer(hwnd, WIN32_MISTER_KEEPALIVE_TIMER,
+                  WIN32_MISTER_KEEPALIVE_MS, NULL))
+            mister_log_note("A modal window has the thread; keeping the "
+                            "session alive from a timer until it lets go.");
+         else
+            mister_log_note("A modal window has the thread and SetTimer "
+                            "failed, so the session cannot be kept alive "
+                            "while it is open.");
+         break;
+      case WM_EXITMENULOOP:
+      case WM_EXITSIZEMOVE:
+         KillTimer(hwnd, WIN32_MISTER_KEEPALIVE_TIMER);
+         mister_log_note("Modal window closed after %u keepalive tick%s.",
+               win32_mister_modal_ticks,
+               win32_mister_modal_ticks == 1 ? "" : "s");
+         break;
+      case WM_TIMER:
+         if (wparam == WIN32_MISTER_KEEPALIVE_TIMER)
+         {
+            settings_t *settings = config_get_ptr();
+            win32_mister_modal_ticks++;
+            if (settings && settings->bools.video_mister_enable)
+               mister_idle_tick();
+         }
+         break;
+#endif
       case WM_SYSCOMMAND:
          /* Prevent screensavers, etc, while running. */
          switch (wparam)
@@ -797,6 +851,18 @@ static LRESULT CALLBACK wnd_proc_common_internal(HWND hwnd,
       case WM_SIZE:
       case WM_GETMINMAXINFO:
       case WM_COMMAND:
+#ifdef HAVE_MISTER
+      /* Modal message loops - the menu bar, and window drag/resize - stop
+       * runloop_iterate for as long as they own the thread, which stops the
+       * MiSTer keepalive. wnd_proc_common turns these into a timer that keeps
+       * the session alive from inside the modal loop, but only if they are
+       * routed to it from here. */
+      case WM_ENTERMENULOOP:
+      case WM_EXITMENULOOP:
+      case WM_ENTERSIZEMOVE:
+      case WM_EXITSIZEMOVE:
+      case WM_TIMER:
+#endif
 #ifdef HAVE_THREADS
       case WM_BROWSER_OPEN_RESULT:
       case WM_BROWSER_CANCELLED:
@@ -882,6 +948,18 @@ static LRESULT CALLBACK wnd_proc_winraw_common_internal(HWND hwnd,
       case WM_SIZE:
       case WM_GETMINMAXINFO:
       case WM_COMMAND:
+#ifdef HAVE_MISTER
+      /* Modal message loops - the menu bar, and window drag/resize - stop
+       * runloop_iterate for as long as they own the thread, which stops the
+       * MiSTer keepalive. wnd_proc_common turns these into a timer that keeps
+       * the session alive from inside the modal loop, but only if they are
+       * routed to it from here. */
+      case WM_ENTERMENULOOP:
+      case WM_EXITMENULOOP:
+      case WM_ENTERSIZEMOVE:
+      case WM_EXITSIZEMOVE:
+      case WM_TIMER:
+#endif
 #ifdef HAVE_THREADS
       case WM_BROWSER_OPEN_RESULT:
       case WM_BROWSER_CANCELLED:
@@ -1106,6 +1184,18 @@ static LRESULT CALLBACK wnd_proc_common_dinput_internal(HWND hwnd,
       case WM_SIZE:
       case WM_GETMINMAXINFO:
       case WM_COMMAND:
+#ifdef HAVE_MISTER
+      /* Modal message loops - the menu bar, and window drag/resize - stop
+       * runloop_iterate for as long as they own the thread, which stops the
+       * MiSTer keepalive. wnd_proc_common turns these into a timer that keeps
+       * the session alive from inside the modal loop, but only if they are
+       * routed to it from here. */
+      case WM_ENTERMENULOOP:
+      case WM_EXITMENULOOP:
+      case WM_ENTERSIZEMOVE:
+      case WM_EXITSIZEMOVE:
+      case WM_TIMER:
+#endif
 #ifdef HAVE_THREADS
       case WM_BROWSER_OPEN_RESULT:
       case WM_BROWSER_CANCELLED:

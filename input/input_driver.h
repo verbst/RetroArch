@@ -794,6 +794,20 @@ const char* config_get_joypad_driver_options(void);
 const input_device_driver_t *input_joypad_init_driver(
       const char *ident, void *data);
 
+#ifdef HAVE_MISTER
+/**
+ * input_joypad_resolve_index:
+ * @param settings_data  settings_t pointer.
+ * @param port           player port to resolve.
+ *
+ * Maps a player port to the device index to read, applying the fallback for
+ * the MiSTer pad indices when the MiSTer controller driver is not active.
+ *
+ * @return The device index to use, always < MAX_USERS.
+ **/
+unsigned input_joypad_resolve_index(void *settings_data, unsigned port);
+#endif
+
 /**
  * Registers a newly connected pad with RetroArch.
  *
@@ -1297,6 +1311,9 @@ extern input_driver_t input_dos;
 extern input_driver_t input_winraw;
 extern input_driver_t input_wayland;
 extern input_driver_t input_test;
+#ifdef HAVE_MISTER
+extern input_driver_t input_mister;
+#endif
 
 extern input_device_driver_t dinput_joypad;
 extern input_device_driver_t linuxraw_joypad;
@@ -1323,6 +1340,9 @@ extern input_device_driver_t dos_joypad;
 extern input_device_driver_t rwebpad_joypad;
 extern input_device_driver_t winraw_joypad;
 extern input_device_driver_t test_joypad;
+#ifdef HAVE_MISTER
+extern input_device_driver_t mister_joypad;
+#endif
 
 #ifdef HAVE_HID
 extern hid_driver_t iohidmanager_hid;

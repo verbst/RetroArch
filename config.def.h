@@ -169,7 +169,37 @@
 
 #define DEFAULT_SCREEN_BRIGHTNESS 100
 
-#define DEFAULT_CRT_SWITCH_RESOLUTION CRT_SWITCH_NONE
+/* This build exists to drive analog CRTs - through a MiSTer over the network,
+ * or directly - so the modeline generator is on out of the box and only the
+ * address has to be set. 15 kHz is the safe preset: it is what an arcade
+ * monitor takes, and a multisync display handles it too. */
+#define DEFAULT_CRT_SWITCH_RESOLUTION CRT_SWITCH_15KHZ
+
+/* Off, so nothing touches the desktop unless it is asked to. With the
+ * generator on by default this is what keeps a first launch safe: on hardware
+ * where switchres really can program modes, applying a 320x240 menu modeline
+ * to the desktop would leave the user staring at an out-of-range monitor with
+ * no way to navigate back. */
+#define DEFAULT_CRT_SWITCH_HOST_MODESWITCH false
+
+/* The values are in configuration.h beside the setting itself.
+ *
+ * Keeping the refresh rate is the default because giving it up is the more
+ * expensive trade: a monitor that cannot scan a core's line count at its own
+ * rate scans it slower instead, and the modeline is the frame clock, so the
+ * emulation, the audio and the frame budget all slow with it. On a 15 kHz
+ * preset that measured 5.45% on GameCube content - audible, and visible.
+ * Scaling the picture into a mode that fits at the right speed costs nothing
+ * at all, because the render viewport is doing that work either way. */
+#define DEFAULT_CRT_SWITCH_MODE_PRIORITY CRT_SWITCH_MODE_KEEP_REFRESH
+
+/* How far the granted refresh may sit from the core's own before Keep
+ * Resolution stops being worth honouring, as a percentage. 0 disables the
+ * cap and keeps the resolution whatever the cost in speed. */
+#define DEFAULT_CRT_SWITCH_REFRESH_TOLERANCE 3
+
+/* Let switchres weigh interlaced against progressive, as it always has. */
+#define DEFAULT_CRT_SWITCH_SCAN_MODE CRT_SCAN_MODE_AUTO
 
 #define DEFAULT_CRT_SWITCH_RESOLUTION_SUPER 2560
 
@@ -179,7 +209,50 @@
 
 #define DEFAULT_CRT_SWITCH_VERTICAL_ADJUST 0
 
-#define DEFAULT_CRT_SWITCH_HIRES_MENU true
+/* Groovy MiSTer output.  Compression defaults to NLC with the Golomb-Rice
+ * pack at near level 1: the combination that holds a locked frame rate on
+ * heavy 3D content as well as 2D, rather than one tuned for 2D alone.
+ * It needs a bitstream carrying the Rice decoder; LZ4 (1) is the fallback
+ * for older ones. */
+/* Off by default: a stock configuration has no address for the user's MiSTer
+ * and no CRT SwitchRes preset, so turning this on for everyone would only buy
+ * a connection attempt to a machine that is not there. Switching it on sets a
+ * CRT SwitchRes preset at the same time, so setting the address and toggling
+ * this is the whole of the setup. */
+#define DEFAULT_VIDEO_MISTER_ENABLE false
+
+#define DEFAULT_MISTER_IP "192.168.0.1"
+
+#define DEFAULT_MISTER_CODEC 7
+
+#define DEFAULT_MISTER_NLC_PACK 2
+
+#define DEFAULT_MISTER_NLC_NEAR 1
+
+#define DEFAULT_MISTER_RGB_MODE 0
+
+#define DEFAULT_MISTER_MTU 1500
+
+#define DEFAULT_MISTER_INTERLACED_FB true
+
+/* 0 = the MiSTer raster is the frame clock (lowest latency),
+ * 1 = RetroArch paces and the stream chases the raster. */
+#define DEFAULT_MISTER_USE_INPUTS true
+
+#define DEFAULT_MISTER_RUMBLE true
+
+/* Empty means "the platform default joypad driver". */
+#define DEFAULT_MISTER_JOYPAD_HOST_DRIVER ""
+
+/* Above any realistic number of host controllers, so wrapping the host driver
+ * leaves its own pad numbering untouched. */
+#define DEFAULT_MISTER_JOYPAD_PORT_BASE 8
+
+#define DEFAULT_MISTER_PACING 0
+
+#define DEFAULT_MISTER_LOG_LEVEL 0
+
+
 
 #define DEFAULT_HISTORY_LIST_ENABLE true
 

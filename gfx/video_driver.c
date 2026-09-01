@@ -51,6 +51,10 @@
 #include "../menu/menu_driver.h"
 #endif
 
+#ifdef HAVE_MISTER
+#include "gfx_mister.h"
+#endif
+
 #ifdef _WIN32
 #include "common/win32_common.h"
 #endif
@@ -3672,6 +3676,32 @@ void video_driver_update_title(void *data)
 #endif
 }
 
+#if defined(HAVE_CRTSWITCHRES)
+/* Whether a modeline generated here would actually be scanned by anything:
+ * a MiSTer over the network, or this PC's own display when the user has asked
+ * for that under Settings > Video > CRT SwitchRes.
+ *
+ * With neither, switchres still resolves modes and still forces the aspect
+ * ratio and render size to match them - and since CRT Super Resolution
+ * defaults to 2560, a 240-line menu mode becomes a 2560x240 aspect, which
+ * flattens the whole picture into an unreadable strip.
+ *
+ * The flag this gates has wider reach than that, too: it stands down the
+ * refresh-rate autoswitch, forces a video driver reinit on every
+ * SET_SYSTEM_AV_INFO, and changes how the audio and video timing skews are
+ * judged. A machine driving no CRT at all should see none of it. */
+static bool video_crt_output_is_live(settings_t *settings)
+{
+   if (!settings)
+      return false;
+#ifdef HAVE_MISTER
+   if (settings->bools.video_mister_enable)
+      return true;
+#endif
+   return settings->bools.crt_switch_host_modeswitch;
+}
+#endif
+
 void video_driver_build_info(video_frame_info_t *video_info)
 {
    video_viewport_t *custom_vp             = NULL;
@@ -3713,6 +3743,27 @@ void video_driver_build_info(video_frame_info_t *video_info)
    video_info->refresh_rate                = settings->floats.video_refresh_rate;
    video_info->crt_switch_resolution       = settings->uints.crt_switch_resolution;
    video_info->crt_switch_resolution_super = settings->uints.crt_switch_resolution_super;
+#ifdef HAVE_MISTER
+   /* The MiSTer scans the modeline out itself, so a super resolution would only
+    * widen the frame we have to send without changing what reaches the CRT -
+    * and a 2560-wide modeline cannot fit its 720x576x3 blit buffer at all.
+    * Reported once, because silently discarding a setting the user chose is
+    * how the last round's diagnosis went wrong. */
+   if (settings->bools.video_mister_enable)
+   {
+      static unsigned last_reported = 0;
+
+      if (settings->uints.crt_switch_resolution_super > 2
+            && last_reported != settings->uints.crt_switch_resolution_super)
+      {
+         last_reported = settings->uints.crt_switch_resolution_super;
+         mister_log_note("CRT Super Resolution %u ignored: a modeline that wide "
+                         "cannot fit the MiSTer's blit buffer. Asking switchres "
+                         "for native width.\n", last_reported);
+      }
+      video_info->crt_switch_resolution_super = 0;
+   }
+#endif
    video_info->crt_switch_center_adjust    = settings->ints.crt_switch_center_adjust;
    video_info->crt_switch_porch_adjust     = settings->ints.crt_switch_porch_adjust;
    video_info->crt_switch_vert_adjust      = settings->ints.crt_switch_vertical_adjust;
@@ -4471,6 +4522,12 @@ bool video_driver_init_internal(bool *video_is_threaded, bool verbosity_enabled)
    video.vsync                       = settings->bools.video_vsync
          && !settings->bools.video_scanline_sync
          && (!(runloop_st->flags & RUNLOOP_FLAG_FORCE_NONBLOCK));
+#ifdef HAVE_MISTER
+   /* The MiSTer's raster is the frame clock while streaming; blocking on the
+    * host display's refresh as well produces beating and dropped frames. */
+   if (settings->bools.video_mister_enable)
+      video.vsync                    = false;
+#endif
    video.force_aspect                = settings->bools.video_force_aspect;
    video.swap_interval               = runloop_get_video_swap_interval(
          settings->uints.video_swap_interval);
@@ -5525,6 +5582,14 @@ void video_driver_frame(const void *data, unsigned width,
 
    video_st->frame_count++;
 
+#ifdef HAVE_MISTER
+   /* Stream the same frame to the MiSTer.  This runs before the CRT
+    * switching block below, which rewrites width for super resolutions;
+    * a mode resolved there is picked up on the next frame. */
+   if (config_get_ptr()->bools.video_mister_enable)
+      mister_draw(video_st, data, width, height, pitch);
+#endif
+
    /* Display the status text, with a higher priority. */
    if (  (   video_info.fps_show
           || video_info.framecount_show
@@ -5575,19 +5640,21 @@ void video_driver_frame(const void *data, unsigned width,
 
 #if defined(HAVE_CRTSWITCHRES)
    /* trigger set resolution*/
-   if (video_info.crt_switch_resolution)
+   if (     video_info.crt_switch_resolution
+         && video_crt_output_is_live(settings))
    {
       unsigned native_width     = width;
+      unsigned super_width      = video_info.crt_switch_resolution_super;
       bool dynamic_super_width  = false;
 
       video_driver_modify_disp_flags(VIDEO_FLAG_CRT_SWITCHING_ACTIVE, 0);
 
-      switch (video_info.crt_switch_resolution_super)
+      switch (super_width)
       {
          case 2560:
          case 3840:
          case 1920:
-            width               = video_info.crt_switch_resolution_super;
+            width               = super_width;
             break;
          case 1:
             dynamic_super_width = true;
@@ -5607,12 +5674,12 @@ void video_driver_frame(const void *data, unsigned width,
             video_info.crt_switch_porch_adjust,
             video_info.monitor_index,
             dynamic_super_width,
-            video_info.crt_switch_resolution_super,
+            super_width,
             video_info.crt_switch_hires_menu,
             config_get_ptr()->uints.video_aspect_ratio_idx,
             video_info.crt_switch_vert_adjust);
    }
-   else if (!video_info.crt_switch_resolution)
+   else
 #endif
       video_driver_modify_disp_flags(0, VIDEO_FLAG_CRT_SWITCHING_ACTIVE);
 

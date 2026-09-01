@@ -351,11 +351,21 @@ input_device_driver_t *joypad_drivers[] = {
 #ifdef HAVE_TEST_DRIVERS
    &test_joypad,
 #endif
+#ifdef HAVE_MISTER
+   /* Aggregator: wraps whichever real driver is chosen, so it is only
+    * ever selected by name. Kept near the end deliberately - as the
+    * first entry it became the fallback whenever the configured driver
+    * failed to start, silently replacing the user's choice. */
+   &mister_joypad,
+#endif
    &null_joypad,
    NULL,
 };
 
 input_driver_t *input_drivers[] = {
+#ifdef HAVE_MISTER
+   &input_mister,
+#endif
 #ifdef ORBIS
    &input_ps4,
 #endif
@@ -633,6 +643,43 @@ float input_driver_get_sensor(
 
    return 0.0f;
 }
+
+#ifdef HAVE_MISTER
+/* Players 1 and 2 default to the MiSTer's pad indices (see config_set_defaults)
+ * so a cabinet takes input with no setup. Those indices sit above this PC's own
+ * controllers and can only ever be filled by the MiSTer controller driver, so
+ * when that driver is not the active one they would leave the port dead. Resolve
+ * them back to the player's own index in that case.
+ *
+ * Done at the point of use rather than written back, so the configured value
+ * survives into the config file and an explicit assignment - any index outside
+ * the MiSTer's own two - is never second-guessed. */
+unsigned input_joypad_resolve_index(void *settings_data, unsigned port)
+{
+   settings_t *settings = (settings_t*)settings_data;
+   unsigned    idx;
+   unsigned    base;
+
+   if (!settings || port >= MAX_USERS)
+      return 0;
+
+   idx  = settings->uints.input_joypad_index[port];
+   base = settings->uints.mister_joypad_port_base;
+
+   if (idx >= MAX_USERS)
+      return 0;
+
+   if (idx >= base && idx < base + 2)
+   {
+      const input_device_driver_t *joypad = input_driver_st.primary_joypad;
+
+      if (!joypad || !string_is_equal(joypad->ident, "mister"))
+         return port;
+   }
+
+   return idx;
+}
+#endif
 
 const input_device_driver_t *input_joypad_init_driver(
       const char *ident, void *data)
@@ -2384,9 +2431,13 @@ static int16_t input_state_internal(
       int16_t port_result            = 0;
       uint8_t input_analog_dpad_mode = settings->uints.input_analog_dpad_mode[mapped_port];
 
+#ifdef HAVE_MISTER
+      joypad_info.joy_idx            = input_joypad_resolve_index(settings, mapped_port);
+#else
       joypad_info.joy_idx            = settings->uints.input_joypad_index[mapped_port];
       if (joypad_info.joy_idx >= MAX_USERS)
          joypad_info.joy_idx         = 0;
+#endif
       joypad_info.auto_binds         = input_autoconf_binds[joypad_info.joy_idx];
 
       /* Skip disabled input devices */
@@ -8064,14 +8115,18 @@ void input_driver_collect_system_input(input_driver_state_t *input_st,
       const struct retro_keybind *binds_norm = &input_config_binds[port][RARCH_ENABLE_HOTKEY];
       const struct retro_keybind *binds_auto = NULL;
 
-      joypad_info.joy_idx                    = settings->uints.input_joypad_index[port];
       /* input_autoconf_binds is [MAX_USERS] and joy_idx comes from the
        * config file, so it can point past the end - the same bound the
        * rumble and autoconfig paths already apply. Fall back to the
        * first slot rather than skipping the port, so a bad index
        * degrades to the wrong binds instead of no input at all. */
+#ifdef HAVE_MISTER
+      joypad_info.joy_idx                    = input_joypad_resolve_index(settings, port);
+#else
+      joypad_info.joy_idx                    = settings->uints.input_joypad_index[port];
       if (joypad_info.joy_idx >= MAX_USERS)
          joypad_info.joy_idx                 = 0;
+#endif
       joypad_info.auto_binds                 = input_autoconf_binds[joypad_info.joy_idx];
       binds_auto                             = &input_autoconf_binds[joypad_info.joy_idx][RARCH_ENABLE_HOTKEY];
 

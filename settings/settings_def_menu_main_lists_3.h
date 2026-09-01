@@ -36,6 +36,18 @@ S_ACTION(CRT_SWITCHRES_SETTINGS,
       "crt_switchres_settings",
       "CRT SwitchRes",
       "Output native, low-resolution signals for use with CRT displays.")
+/* Descriptor and configuration rows are #ifdef HAVE_MISTER; the string
+ * tables always carry this row via the strings pass. */
+#if defined(HAVE_MISTER) || defined(SETTINGS_DEF_STRINGS_PASS)
+S_ACTION(MISTER_SETTINGS,
+      "mister_settings",
+      "Groovy MiSTer",
+      "Stream video, audio and input to a MiSTer FPGA driving a CRT.")
+S_ACTION(MISTER_ADVANCED_SETTINGS,
+      "mister_advanced_settings",
+      "Advanced",
+      "Picture geometry on the tube, and which host controller driver the MiSTer one wraps. The defaults suit most setups.")
+#endif
 S_ACTION(VIDEO_OUTPUT_SETTINGS,
       "video_output_settings",
       "Output",

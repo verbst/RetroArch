@@ -857,6 +857,21 @@ if [ "$HAVE_CRTSWITCHRES" != no ]; then
    fi
 fi
 
+# Groovy MiSTer streams frames to a MiSTer FPGA, which drives the CRT.  The
+# modelines it sends come from switchres, so it cannot be built without CRT
+# mode switching; that dependency also covers the C++11 requirement.
+if [ "$HAVE_MISTER" != no ]; then
+   if [ "$HAVE_CRTSWITCHRES" = 'no' ]; then
+      if [ "${USER_MISTER:-}" = 'yes' ]; then
+         die 1 'Error: Groovy MiSTer support requires CRT mode switching, which is disabled.'
+      fi
+      die : 'Notice: CRT mode switching disabled, Groovy MiSTer support will also be disabled.'
+      HAVE_MISTER=no
+   else
+      HAVE_MISTER=yes
+   fi
+fi
+
 check_enabled SLANG GLSLANG glslang 'slang is' false
 check_enabled SLANG SPIRV_CROSS SPIRV-Cross 'slang is' false
 check_enabled SLANG OPENGL_CORE 'OpenGL core' 'slang is' false

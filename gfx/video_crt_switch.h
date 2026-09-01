@@ -64,6 +64,29 @@ typedef struct videocrt_switch
    uint16_t hdisplay, hsync_start, hsync_end, htotal, hskew;
    uint16_t vdisplay, vsync_start, vsync_end, vtotal, vscan;
    bool sr2_active;
+   /* What switchres was last initialised with. The monitor preset, the super
+    * width and the display index are all applied once, inside the init block,
+    * so a change to any of them means the live switchres is answering for the
+    * wrong monitor until it is rebuilt. Remembered here rather than read back
+    * from switchres: a switchres.ini beside the config is loaded after
+    * sr_set_monitor() and may legitimately change the active monitor, so
+    * comparing against what switchres reports would differ forever and rebuild
+    * every frame. A copy set from the same inputs converges. */
+   unsigned sr2_crt_mode;
+   int      sr2_super_width;
+   int      sr2_monitor_index;
+   bool     sr2_init_state_valid;
+   /* Scan mode is a per-resolve option rather than an init-time one, so it does
+    * not belong in the rebuild guard above - but a change to it still has to
+    * reach the resolver, which the geometry test cannot see on its own. */
+   unsigned sr2_scan_mode;
+   bool     sr2_scan_mode_valid;
+   /* Whether this monitor can scan a progressive 640x480 menu. Answered by
+    * asking switchres once and then remembered, because the menu resolves a
+    * geometry every frame and each probe appends to switchres's mode list.
+    * Cleared whenever switchres is rebuilt on a new monitor. */
+   bool     menu_hires_ok;
+   bool     menu_hires_valid;
    bool menu_active;
    bool hh_core;
 
@@ -91,6 +114,33 @@ void crt_switch_res_core(
       int crt_switch_vert_adjust);
 
 void crt_destroy_modes(videocrt_switch_t *p_switch);
+
+/**
+ * crt_switch_forget_resolved:
+ * @param p_switch  the CRT switching state.
+ *
+ * Forget that the current geometry has already been resolved, so the next frame
+ * asks switchres for a modeline again. Used when a stream session restarts
+ * under an unchanged core, which would otherwise leave it with no modeline and
+ * nothing to send.
+ **/
+void crt_switch_forget_resolved(videocrt_switch_t *p_switch);
+
+/* switchres monitor preset name for a crt_switch_type value, or NULL when
+ * the value selects no preset (Off, or INI where switchres.ini supplies it). */
+const char *crt_switch_monitor_preset(unsigned crt_mode);
+
+/* Coarse horizontal frequency bounds for a monitor preset, in Hz. Either may
+ * be 0, meaning unbounded on that side - which is what a multi-sync preset
+ * reports, since it legitimately covers several ranges. */
+void crt_monitor_hfreq_bounds(unsigned crt_mode, double *min_hz, double *max_hz);
+
+/* The monitor switchres actually ended up with, and the super width in force.
+ * Requested and active differ whenever a switchres.ini overrides the preset,
+ * which is otherwise invisible. Kept here rather than exported as an sr_state
+ * because switchres_wrapper.h has no include guard and must stay in one
+ * translation unit. */
+void crt_switch_monitor_state(char *s, size_t len, int *super_width);
 
 RETRO_END_DECLS
 

@@ -71,13 +71,74 @@
 
 RETRO_BEGIN_DECLS
 
+/* Selects the switchres monitor preset used to generate modelines. The set
+ * is switchres's own compiled-in presets (deps/switchres/monitor.cpp,
+ * monitor_set_preset); pure aliases are omitted, d9400 == d9800 and
+ * polo == h9110, and both are still accepted from switchres.ini.
+ *
+ * The first three keep the values RetroArch has always used - 15KHZ is
+ * arcade_15, 31KHZ is arcade_31, 32_120 is pc_31_120 - so a configuration
+ * written before the list was completed still selects the same monitor.
+ * CRT_SWITCH_INI moved from 4 to the end of the list, so a configuration
+ * carrying crt_switch_resolution = 4 now means arcade_15ex. */
+/* What to give up when a monitor cannot scan a core's picture at the rate the
+ * core asks for. switchres itself always keeps the resolution and slows the
+ * scan; keeping the refresh instead means scaling the picture into a mode that
+ * fits at the right speed. */
+enum crt_switch_mode_priority
+{
+   /* Keeping the refresh rate first because it is the default, and a menu
+    * lists these in value order. Every use of these names is symbolic, so the
+    * order is free to change here - what it does change is the meaning of the
+    * number in a config file, and no migration is provided. */
+   CRT_SWITCH_MODE_KEEP_REFRESH = 0,
+   CRT_SWITCH_MODE_KEEP_RESOLUTION
+};
+
+/* Whether an interlaced modeline is an acceptable answer.
+ *
+ * Automatic lets switchres weigh interlaced against progressive as it always
+ * has. Progressive only refuses interlace outright, which on a 15 kHz preset
+ * forces the answer down into its progressive line range - 240p rather than
+ * 480i - at the cost of half the vertical resolution. */
+enum crt_scan_mode
+{
+   CRT_SCAN_MODE_AUTO = 0,
+   CRT_SCAN_MODE_PROGRESSIVE
+};
+
 enum crt_switch_type
 {
    CRT_SWITCH_NONE = 0,
    CRT_SWITCH_15KHZ,
    CRT_SWITCH_31KHZ,
    CRT_SWITCH_32_120,
-   CRT_SWITCH_INI
+   CRT_SWITCH_ARCADE_15EX,
+   CRT_SWITCH_ARCADE_25,
+   CRT_SWITCH_ARCADE_15_25,
+   CRT_SWITCH_ARCADE_15_31,
+   CRT_SWITCH_ARCADE_15_25_31,
+   CRT_SWITCH_GENERIC_15,
+   CRT_SWITCH_NTSC,
+   CRT_SWITCH_PAL,
+   CRT_SWITCH_D9800,
+   CRT_SWITCH_D9200,
+   CRT_SWITCH_K7000,
+   CRT_SWITCH_K7131,
+   CRT_SWITCH_M3129,
+   CRT_SWITCH_M2929,
+   CRT_SWITCH_H9110,
+   CRT_SWITCH_PSTAR,
+   CRT_SWITCH_MS2930,
+   CRT_SWITCH_MS929,
+   CRT_SWITCH_R666B,
+   CRT_SWITCH_PC_70_120,
+   CRT_SWITCH_VESA_480,
+   CRT_SWITCH_VESA_600,
+   CRT_SWITCH_VESA_768,
+   CRT_SWITCH_VESA_1024,
+   CRT_SWITCH_INI,
+   CRT_SWITCH_LAST
 };
 
 enum override_type
@@ -225,6 +286,20 @@ typedef struct settings
       unsigned video_window_opacity;
       unsigned crt_switch_resolution;
       unsigned crt_switch_resolution_super;
+      unsigned crt_switch_mode_priority;
+      /* enum crt_scan_mode: whether interlaced modelines may be chosen. */
+      unsigned crt_switch_scan_mode;
+      /* Percent. How far the granted refresh may sit from the core's own
+       * before Keep Resolution gives way; 0 disables the cap. */
+      unsigned crt_switch_refresh_tolerance;
+      unsigned mister_codec;
+      unsigned mister_nlc_pack;
+      unsigned mister_nlc_near;
+      unsigned mister_rgb_mode;
+      unsigned mister_mtu;
+      unsigned mister_pacing;
+      unsigned mister_joypad_port_base;
+      unsigned mister_log_level;
       unsigned screen_brightness;
       unsigned video_monitor_index;
       unsigned video_fullscreen_x;
@@ -840,7 +915,14 @@ typedef struct settings
       bool kiosk_mode_enable;
 
       bool crt_switch_custom_refresh_enable;
+      bool crt_switch_host_modeswitch;
       bool crt_switch_hires_menu;
+
+      /* Groovy MiSTer */
+      bool video_mister_enable;
+      bool mister_interlaced_fb;
+      bool mister_use_inputs;
+      bool mister_rumble;
 
       /* Netplay */
       bool netplay_show_only_connectable;
@@ -1112,6 +1194,8 @@ typedef struct settings
 #endif
       char input_keyboard_layout[64];
       char cheevos_custom_host[64];
+      char mister_ip[64];
+      char mister_joypad_host_driver[32];
 
 #ifdef HAVE_LAKKA
       char timezone[TIMEZONE_LENGTH];

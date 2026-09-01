@@ -1814,6 +1814,32 @@ static void vulkan_copy_staging_to_dynamic(vk_t *vk, VkCommandBuffer cmd,
 /**
  * FORWARD DECLARATIONS
  */
+
+#ifdef HAVE_MISTER
+/* Groovy MiSTer output: pin the render viewport to the modeline the FPGA is
+ * scanning out, so read_viewport hands back exactly the pixels that go on the
+ * wire. Reading at window size instead would copy several megabytes off the
+ * GPU every frame and then throw most of them away in a downscale. The host
+ * window renders at this size too, which is the accepted trade: the CRT is the
+ * real display while streaming. */
+void vulkan_mister_set_viewport(void *data, unsigned width, unsigned height)
+{
+   vk_t *v = (vk_t*)data;
+
+   if (!v || !width || !height)
+      return;
+
+   v->video_width     = width;
+   v->video_height    = height;
+   v->vp.x            = 0;
+   v->vp.y            = 0;
+   v->vp.width        = width;
+   v->vp.height       = height;
+   v->vp.full_width   = width;
+   v->vp.full_height  = height;
+}
+#endif
+
 static void vulkan_set_viewport(void *data, unsigned vp_width,
       unsigned vp_height, bool force_full, bool allow_rotate);
 

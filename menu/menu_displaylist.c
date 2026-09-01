@@ -10665,10 +10665,93 @@ unsigned menu_displaylist_build_list(
             }
          }
          break;
+#ifdef HAVE_MISTER
+      case DISPLAYLIST_MISTER_SETTINGS_LIST:
+         {
+            static const menu_displaylist_build_info_t build_list[] = {
+               /* Grouped by what a user actually reaches for: get connected,
+                * decide what the MiSTer is asked to scan, then how that is
+                * clocked, then how it is compressed, then controllers, then
+                * the wire details almost nobody changes. */
+               {MENU_ENUM_LABEL_VIDEO_MISTER_ENABLE,        PARSE_ONLY_BOOL},
+               {MENU_ENUM_LABEL_MISTER_IP,                  PARSE_ONLY_STRING},
+               /* The monitor preset decides the modeline the MiSTer is asked
+                * to scan, so it belongs here rather than only under Video.
+                * These are the same settings as Settings > Video > CRT
+                * SwitchRes, not copies; the fine geometry trims and the
+                * host-display switch live on the Advanced page below. Super
+                * Resolution is deliberately on neither: it widens the
+                * framebuffer to 2560 pixels or more, which on a streamed link
+                * is bandwidth spent on something the MiSTer's own scaler does
+                * not need. */
+               {MENU_ENUM_LABEL_CRT_SWITCH_RESOLUTION,      PARSE_ONLY_UINT},
+               {MENU_ENUM_LABEL_CRT_SWITCH_MODE_PRIORITY,   PARSE_ONLY_UINT},
+               /* Directly under the setting it qualifies: it does nothing
+                * unless Mode Priority is Keep Resolution. */
+               {MENU_ENUM_LABEL_CRT_SWITCH_REFRESH_TOLERANCE, PARSE_ONLY_UINT},
+               {MENU_ENUM_LABEL_CRT_SWITCH_SCAN_MODE,       PARSE_ONLY_UINT},
+               {MENU_ENUM_LABEL_MISTER_PACING,              PARSE_ONLY_UINT},
+               {MENU_ENUM_LABEL_MISTER_CODEC,               PARSE_ONLY_UINT},
+               {MENU_ENUM_LABEL_MISTER_NLC_PACK,            PARSE_ONLY_UINT},
+               {MENU_ENUM_LABEL_MISTER_NLC_NEAR,            PARSE_ONLY_UINT},
+               {MENU_ENUM_LABEL_MISTER_RGB_MODE,            PARSE_ONLY_UINT},
+               {MENU_ENUM_LABEL_MISTER_USE_INPUTS,          PARSE_ONLY_BOOL},
+               {MENU_ENUM_LABEL_MISTER_RUMBLE,              PARSE_ONLY_BOOL},
+               {MENU_ENUM_LABEL_MISTER_LOG_LEVEL,           PARSE_ONLY_UINT},
+               {MENU_ENUM_LABEL_MISTER_ADVANCED_SETTINGS,   PARSE_ACTION   },
+            };
+            size_t i;
+
+            for (i = 0; i < ARRAY_SIZE(build_list); i++)
+               if (MENU_DISPLAYLIST_PARSE_SETTINGS_ENUM(list,
+                        build_list[i].enum_idx, build_list[i].parse_type,
+                        false) == 0)
+                  count++;
+         }
+         break;
+      case DISPLAYLIST_MISTER_ADVANCED_SETTINGS_LIST:
+         {
+            static const menu_displaylist_build_info_t build_list[] = {
+               /* Geometry trims for the generated modeline, and the two
+                * switches a MiSTer user should almost never touch. Shared with
+                * Settings > Video > CRT SwitchRes.
+                *
+                * Host modeswitch in particular: with MiSTer output on it is
+                * forced off anyway (switchres_calc_only), so it is here to be
+                * findable rather than to be changed. */
+               {MENU_ENUM_LABEL_CRT_SWITCH_HOST_MODESWITCH, PARSE_ONLY_BOOL},
+               /* Now a preference rather than a demand - it falls back on its
+                * own when the preset cannot scan 480 progressive - so there is
+                * seldom any reason to touch it. */
+               {MENU_ENUM_LABEL_CRT_SWITCH_HIRES_MENU,      PARSE_ONLY_BOOL},
+               {MENU_ENUM_LABEL_CRT_SWITCH_RESOLUTION_USE_CUSTOM_REFRESH_RATE, PARSE_ONLY_BOOL},
+               {MENU_ENUM_LABEL_CRT_SWITCH_PORCH_ADJUST,    PARSE_ONLY_INT },
+               {MENU_ENUM_LABEL_CRT_SWITCH_X_AXIS_CENTERING, PARSE_ONLY_INT},
+               {MENU_ENUM_LABEL_CRT_SWITCH_VERTICAL_ADJUST, PARSE_ONLY_INT },
+               /* Wire format: set once for a link, then left alone. */
+               {MENU_ENUM_LABEL_MISTER_INTERLACED_FB,       PARSE_ONLY_BOOL},
+               {MENU_ENUM_LABEL_MISTER_MTU,                 PARSE_ONLY_UINT},
+               {MENU_ENUM_LABEL_MISTER_JOYPAD_PORT_BASE,    PARSE_ONLY_UINT},
+               {MENU_ENUM_LABEL_MISTER_JOYPAD_HOST_DRIVER,  PARSE_ONLY_STRING},
+            };
+            size_t i;
+
+            for (i = 0; i < ARRAY_SIZE(build_list); i++)
+               if (MENU_DISPLAYLIST_PARSE_SETTINGS_ENUM(list,
+                        build_list[i].enum_idx, build_list[i].parse_type,
+                        false) == 0)
+                  count++;
+         }
+         break;
+#endif
       case DISPLAYLIST_CRT_SWITCHRES_SETTINGS_LIST:
          {
             static const menu_displaylist_build_info_t build_list[] = {
                {MENU_ENUM_LABEL_CRT_SWITCH_RESOLUTION,                                 PARSE_ONLY_UINT},
+               {MENU_ENUM_LABEL_CRT_SWITCH_HOST_MODESWITCH,                            PARSE_ONLY_BOOL},
+               {MENU_ENUM_LABEL_CRT_SWITCH_MODE_PRIORITY,                              PARSE_ONLY_UINT},
+               {MENU_ENUM_LABEL_CRT_SWITCH_SCAN_MODE,                                  PARSE_ONLY_UINT},
+               {MENU_ENUM_LABEL_CRT_SWITCH_REFRESH_TOLERANCE,                          PARSE_ONLY_UINT},
                {MENU_ENUM_LABEL_CRT_SWITCH_HIRES_MENU,                                 PARSE_ONLY_BOOL},
                {MENU_ENUM_LABEL_CRT_SWITCH_RESOLUTION_USE_CUSTOM_REFRESH_RATE,         PARSE_ONLY_BOOL},
                {MENU_ENUM_LABEL_CRT_SWITCH_RESOLUTION_SUPER,                           PARSE_ONLY_UINT},
@@ -11594,6 +11677,12 @@ unsigned menu_displaylist_build_list(
                {MENU_ENUM_LABEL_VIDEO_SETTINGS,              PARSE_ACTION, true},
                {MENU_ENUM_LABEL_AUDIO_SETTINGS,              PARSE_ACTION, true},
                {MENU_ENUM_LABEL_INPUT_SETTINGS,              PARSE_ACTION, true},
+#ifdef HAVE_MISTER
+               /* Top level rather than under Video: it carries audio and input
+                * as well, so filing it under one of the three would hide the
+                * other two. */
+               {MENU_ENUM_LABEL_MISTER_SETTINGS,             PARSE_ACTION, true},
+#endif
                {MENU_ENUM_LABEL_LATENCY_SETTINGS,            PARSE_ACTION, true},
                {MENU_ENUM_LABEL_FRAME_THROTTLE_SETTINGS,     PARSE_ACTION, true},
                {MENU_ENUM_LABEL_DRIVER_SETTINGS,             PARSE_ACTION, true},
@@ -15126,6 +15215,10 @@ bool menu_displaylist_ctl(enum menu_displaylist_ctl_state type,
 #endif
          case DISPLAYLIST_MIDI_SETTINGS_LIST:
          case DISPLAYLIST_CRT_SWITCHRES_SETTINGS_LIST:
+#ifdef HAVE_MISTER
+         case DISPLAYLIST_MISTER_SETTINGS_LIST:
+         case DISPLAYLIST_MISTER_ADVANCED_SETTINGS_LIST:
+#endif
          case DISPLAYLIST_VIDEO_FULLSCREEN_MODE_SETTINGS_LIST:
          case DISPLAYLIST_VIDEO_WINDOWED_MODE_SETTINGS_LIST:
          case DISPLAYLIST_VIDEO_OUTPUT_SETTINGS_LIST:

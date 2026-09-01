@@ -763,8 +763,46 @@ DECL_AXIS(r_y_minus, +3) \
 DECL_AXIS(l2, +4) \
 DECL_AXIS(r2, +5)
 
+#ifdef HAVE_MISTER
+/* Controllers plugged into the MiSTer.  The wire is generic Button 1..12 with
+ * the d-pad on bits 0-3; the MiSTer normalises whatever is physically attached
+ * via its own per-device .map files, so one profile covers every controller
+ * and no per-device setup is ever needed on this side.
+ *
+ * Positions follow the canonical layout: 1-4 are the face buttons, 5/6 the
+ * shoulders, 7/8 Select/Start, 9/10 the triggers and 11/12 the stick clicks. */
+#define MISTER_DEFAULT_BINDS \
+DECL_BTN(right, 0) \
+DECL_BTN(left, 1) \
+DECL_BTN(down, 2) \
+DECL_BTN(up, 3) \
+DECL_BTN(b, 4) \
+DECL_BTN(a, 5) \
+DECL_BTN(y, 6) \
+DECL_BTN(x, 7) \
+DECL_BTN(l, 8) \
+DECL_BTN(r, 9) \
+DECL_BTN(select, 10) \
+DECL_BTN(start, 11) \
+DECL_BTN(l2, 12) \
+DECL_BTN(r2, 13) \
+DECL_BTN(l3, 14) \
+DECL_BTN(r3, 15) \
+DECL_AXIS(l_x_plus,  +0) \
+DECL_AXIS(l_x_minus, -0) \
+DECL_AXIS(l_y_plus,  +1) \
+DECL_AXIS(l_y_minus, -1) \
+DECL_AXIS(r_x_plus,  +2) \
+DECL_AXIS(r_x_minus, -2) \
+DECL_AXIS(r_y_plus,  +3) \
+DECL_AXIS(r_y_minus, -3)
+#endif
+
 const char* const input_builtin_autoconfs[] =
 {
+#ifdef HAVE_MISTER
+   DECL_AUTOCONF_DEVICE("MiSTer Pad", "mister", MISTER_DEFAULT_BINDS),
+#endif
 #if defined(_WIN32) && defined(_XBOX)
    DECL_AUTOCONF_DEVICE("XInput Controller (User 1)", "xdk", XINPUT_DEFAULT_BINDS),
    DECL_AUTOCONF_DEVICE("XInput Controller (User 2)", "xdk", XINPUT_DEFAULT_BINDS),
