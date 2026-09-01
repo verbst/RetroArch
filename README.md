@@ -9,42 +9,44 @@ Nothing here changes how RetroArch behaves with the output turned off.
 ## Getting it running
 
 1. Run the Groovy core on the MiSTer.
-2. **Settings > Video > CRT SwitchRes** — pick the monitor preset that matches your display.
+2. In Retroarch: **Settings > Groovy MiSTer > CRT SwitchRes** — pick the monitor preset that matches your display.
    This is what modelines are generated for, so it has to be right.
-3. **Settings > Video > Groovy MiSTer** — turn on **Groovy MiSTer Output** and set
-   **MiSTer Address** to your MiSTer's IP.
+3. **Settings > Groovy MiSTer** — set **MiSTer Address** to your MiSTer's IP and turn on **Groovy MiSTer Output**.
 
 Everything else has a working default.
 
 ## Settings
 
-Under **Settings > Video > Groovy MiSTer**:
+Found in **Settings > Groovy MiSTer**:
 
 | Setting | Default | What it does |
 |---|---|---|
-| Groovy MiSTer Output | Off | Streams to the MiSTer instead of a local display. |
-| MiSTer Address | 192.168.0.1 | Where to send it. |
-| CRT SwitchRes | — | The monitor preset. Same setting as the CRT SwitchRes page. |
-| Mode Priority | Keep Refresh Rate | What to give up when a monitor cannot scan a core's picture at the rate it asks for. Keeping the resolution sends every line the core drew, at whatever refresh the monitor manages — which slows the game to match. Keeping the refresh runs the core at its proper speed and scales the picture instead. |
+| Groovy MiSTer Output | Off | Enables streaming to the MiSTer. |
+| MiSTer Address | 192.168.0.1 | IP Address of your MiSTer FGPA. |
+| CRT SwitchRes | — | The monitor preset. Make sure this matches your MiSTer CRT. (Same setting as the CRT SwitchRes page). |
+| Mode Priority | Keep Refresh Rate | What to give up when a monitor cannot scan a core's picture at the rate it asks for. Keeping the resolution sends every line the core drew, at whatever refresh the monitor manages — which slows the game to match. Keeping the refresh runs the core at its proper speed and scales the picture instead. Refresh mode is recommended.|
 | Keep Resolution Limit | 3% | Only applies to Keep Resolution: how much game speed you will give up before it gives in and scales instead. Unlimited keeps the resolution whatever it costs. |
 | Scan Mode | Interlaced & Progressive | Progressive Only refuses interlaced modes, so a 15 kHz monitor gets 240p rather than 480i — steadier, at half the vertical detail. |
 | Frame Clock | MiSTer CRT raster | Whether the MiSTer's raster or RetroArch's own limiter paces the frame loop. |
-| Compression | NLC | NLC is a near-lossless codec built for this link. The LZ4 modes are the older ones. |
-| NLC Entropy Pack | Rice | How NLC packs its output. |
-| NLC Level | 1 | How much NLC may quantise. 0 is lossless and can saturate the link on busy scenes; 1 is invisible on a CRT. |
-| Colour Depth | RGB888 | RGB565 halves the bandwidth but NLC has no encoder for it. |
+| Compression | NLC | NLC is a lossless (RAW quality) and near-lossless codec built for this link. The RAW/LZ4 modes are legacy. |
+| NLC Entropy Pack | Rice | How NLC packs its output. Rice is recommended.|
+| NLC Level | 1 | How much NLC may quantise. 0 is lossless and can saturate the link on busy scenes; 1 is lightest amount of loss, 3 heaviest. Each level dramatically reduces bandwidth. |
+| Colour Depth | RGB888 | RGB565 halves the bandwidth, but at a reduction of colour depth. RGB565 is not supported for NLC. |
 | Use MiSTer Controllers | On | Read pads plugged into the MiSTer. |
 | MiSTer Rumble | On | Force feedback on those pads. |
-| Log Verbosity | Errors and setup only | Raise this to get per-frame pacing figures in `mister.log`. |
+| Log Verbosity | Errors and setup only | Raise this to get per-frame pacing figures in `logs/mister.log`. |
 
-Under **Advanced**, set once and then left alone: the high-resolution menu, host display
+<img width="960" height="718" alt="image" src="https://github.com/user-attachments/assets/11861c17-c1c1-40f1-bafd-929bdabf33b6" />
+
+Under **Advanced**, settings typically not required: 
+Switch Host Display Mode (Outputs to CRT from host machine. Not recommended while using MiSTer), high-resolution menu,
 switching, the geometry trims, interlaced framebuffer, MTU, and controller port mapping.
 
 ## Notes
 
 - The monitor preset is the setting that matters most. Pick the wrong one and you get modelines
   your CRT cannot scan.
-- Changing the preset takes effect immediately — no restart.
+- Changing the preset takes effect immediately — no restart required.
 - **Use High Resolution Menu** is on by default and safe to leave there. It asks the preset
   whether a progressive 640x480 is scannable and quietly falls back to 320x240 if not.
 - If the picture is fine but the game feels slow, check Mode Priority. A monitor that cannot scan
