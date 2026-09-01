@@ -221,6 +221,7 @@ enum input_driver_enum
    INPUT_RWEBINPUT,
    INPUT_DOS,
    INPUT_WINRAW,
+   INPUT_MISTER,
    INPUT_NULL
 };
 
@@ -248,6 +249,7 @@ enum joypad_driver_enum
    JOYPAD_RWEBPAD,
    JOYPAD_MFI,
    JOYPAD_WINRAW,
+   JOYPAD_MISTER,
    JOYPAD_NULL
 };
 
@@ -796,6 +798,12 @@ static const enum menu_driver_enum MENU_DEFAULT_DRIVER = MENU_RGUI;
 #define MENU_DEFAULT_DRIVER (ios_running_on_ipad() ? MENU_OZONE : MENU_MATERIALUI)
 #elif defined(HAVE_MATERIALUI) && defined(RARCH_MOBILE)
 static const enum menu_driver_enum MENU_DEFAULT_DRIVER = MENU_MATERIALUI;
+#elif defined(HAVE_RGUI)
+/* RGUI is the default here rather than Ozone: this build targets analog CRTs
+ * through CRT SwitchRes and Groovy MiSTer output, where the working resolution
+ * is 240p-480p. Ozone's layout assumes far more vertical space than that and
+ * becomes unusable. RGUI is designed for exactly this resolution range. */
+static const enum menu_driver_enum MENU_DEFAULT_DRIVER = MENU_RGUI;
 #elif defined(HAVE_OZONE)
 static const enum menu_driver_enum MENU_DEFAULT_DRIVER = MENU_OZONE;
 #elif defined(HAVE_XMB) && !defined(_XBOX)
@@ -1262,6 +1270,8 @@ const char *config_get_default_input(void)
           return "rwebinput";
       case INPUT_DOS:
          return "dos";
+      case INPUT_MISTER:
+         return "mister";
       case INPUT_NULL:
           break;
    }
@@ -1336,6 +1346,8 @@ const char *config_get_default_joypad(void)
          return "mfi";
       case JOYPAD_WINRAW:
          return "winraw";
+      case JOYPAD_MISTER:
+         return "mister";
       case JOYPAD_NULL:
          break;
    }
@@ -1601,6 +1613,8 @@ static struct config_array_setting *populate_settings_array(
    SETTING_ARRAY("midi_input",                   settings->arrays.midi_input, true, DEFAULT_MIDI_INPUT, true);
    SETTING_ARRAY("midi_output",                  settings->arrays.midi_output, true, DEFAULT_MIDI_OUTPUT, true);
    SETTING_ARRAY("ai_service_backend",           settings->arrays.ai_service_backend, false, NULL, true);
+   SETTING_ARRAY("mister_ip",                    settings->arrays.mister_ip, true, DEFAULT_MISTER_IP, true);
+   SETTING_ARRAY("mister_joypad_host_driver",     settings->arrays.mister_joypad_host_driver, true, DEFAULT_MISTER_JOYPAD_HOST_DRIVER, true);
 
    SETTING_ARRAY("video_driver",                 settings->arrays.video_driver, false, NULL, true);
    SETTING_ARRAY("video_context_driver",         settings->arrays.video_context_driver, false, NULL, true);
@@ -2034,6 +2048,7 @@ static struct config_bool_setting *populate_settings_bool(
 #endif
 #include "settings/settings_def_menu_entry_display.h"
 #include "settings/settings_def_crt_switchres.h"
+#include "settings/settings_def_mister.h"
 #include "settings/settings_def_audio_state.h"
 #include "settings/settings_def_analog_deadzone.h"
 #include "settings/settings_def_desktop_menu.h"
@@ -2746,6 +2761,7 @@ static struct config_float_setting *populate_settings_float(
 #endif
 #include "settings/settings_def_menu_entry_display.h"
 #include "settings/settings_def_crt_switchres.h"
+#include "settings/settings_def_mister.h"
 #include "settings/settings_def_audio_state.h"
 #include "settings/settings_def_analog_deadzone.h"
 #include "settings/settings_def_desktop_menu.h"
@@ -3410,6 +3426,7 @@ static struct config_uint_setting *populate_settings_uint(
 #endif
 #include "settings/settings_def_menu_entry_display.h"
 #include "settings/settings_def_crt_switchres.h"
+#include "settings/settings_def_mister.h"
 #include "settings/settings_def_audio_state.h"
 #include "settings/settings_def_analog_deadzone.h"
 #include "settings/settings_def_desktop_menu.h"
@@ -4122,6 +4139,7 @@ static struct config_int_setting *populate_settings_int(
 #endif
 #include "settings/settings_def_menu_entry_display.h"
 #include "settings/settings_def_crt_switchres.h"
+#include "settings/settings_def_mister.h"
 #include "settings/settings_def_audio_state.h"
 #include "settings/settings_def_analog_deadzone.h"
 #include "settings/settings_def_desktop_menu.h"
@@ -4715,6 +4733,7 @@ static struct config_int_setting *populate_settings_int(
 #endif
 #include "settings/settings_def_menu_entry_display.h"
 #include "settings/settings_def_crt_switchres.h"
+#include "settings/settings_def_mister.h"
 #include "settings/settings_def_audio_state.h"
 #include "settings/settings_def_analog_deadzone.h"
 #include "settings/settings_def_desktop_menu.h"
@@ -5510,6 +5529,19 @@ void config_set_defaults(void *data)
          settings->arrays.midi_output,
          DEFAULT_MIDI_OUTPUT);
 
+#ifdef HAVE_MISTER
+   /* String settings need their default applied explicitly: config_set_defaults
+    * consumes the `def` field of the bool/int/uint/size/float tables only, so
+    * the one carried by SETTING_ARRAY is never read. Same reason midi_input
+    * and midi_output are set here rather than relying on their table row. */
+   configuration_set_string(settings,
+         settings->arrays.mister_ip,
+         DEFAULT_MISTER_IP);
+   configuration_set_string(settings,
+         settings->arrays.mister_joypad_host_driver,
+         DEFAULT_MISTER_JOYPAD_HOST_DRIVER);
+#endif
+
 #ifdef HAVE_LAKKA
    configuration_set_bool(settings,
          settings->bools.ssh_enable, filestream_exists(LAKKA_SSH_PATH));
@@ -5567,6 +5599,28 @@ void config_set_defaults(void *data)
       input_config_set_device((unsigned)i, RETRO_DEVICE_JOYPAD);
       settings->uints.input_mouse_index[i] = (unsigned)i;
    }
+
+#ifdef HAVE_MISTER
+   /* Players 1 and 2 point at the MiSTer's two pads out of the box, so a
+    * cabinet needs nothing configured beyond the address. The pads sit above
+    * this PC's own controllers so their numbering never shifts, which also
+    * means the indices are unreachable when the MiSTer controller driver is
+    * not the active one - input_joypad_resolve_index() resolves them back to
+    * the player's own index at the point of use in that case, rather than
+    * leaving a plugged-in controller dead. A value read from a config file
+    * always wins over this, so an explicit assignment is never overwritten. */
+   if (DEFAULT_MISTER_JOYPAD_PORT_BASE + 1 < MAX_USERS)
+   {
+      settings->uints.input_joypad_index[0] =
+            DEFAULT_MISTER_JOYPAD_PORT_BASE;
+      settings->uints.input_joypad_index[1] =
+            DEFAULT_MISTER_JOYPAD_PORT_BASE + 1;
+      /* Keep the mapping a permutation so the displaced indices stay
+       * reachable rather than being dropped. */
+      settings->uints.input_joypad_index[DEFAULT_MISTER_JOYPAD_PORT_BASE]     = 0;
+      settings->uints.input_joypad_index[DEFAULT_MISTER_JOYPAD_PORT_BASE + 1] = 1;
+   }
+#endif
 
    custom_vp->width  = 0;
    custom_vp->height = 0;

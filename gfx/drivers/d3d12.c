@@ -120,6 +120,11 @@ enum d3d12_video_flags
     * luminance (RETRO_PIXEL_FORMAT_HDR10_2101010), so the HDR composition
     * must pass them through rather than encode them a second time. */
    D3D12_ST_FLAG_SOURCE_HDR10          = (1 << 17)
+#ifdef HAVE_MISTER
+   ,
+   /* Viewport pinned to a MiSTer modeline; see d3d12_mister_set_viewport. */
+   D3D12_ST_FLAG_MISTER_PIN            = (1 << 18)
+#endif
 };
 
 typedef enum
@@ -472,6 +477,10 @@ typedef struct
    D3D12_GPU_DESCRIPTOR_HANDLE     samplers[RARCH_FILTER_MAX][RARCH_WRAP_MAX];
    math_matrix_4x4                 mvp, mvp_no_rot, identity;
    struct video_viewport           vp;
+#ifdef HAVE_MISTER
+   unsigned                        mister_w;
+   unsigned                        mister_h;
+#endif
    D3D12Resource                   menu_pipeline_vbo;
    D3D12_VERTEX_BUFFER_VIEW        menu_pipeline_vbo_view;
 
@@ -2310,6 +2319,21 @@ static void d3d12_gfx_set_rotation(void* data, unsigned rotation)
 
 static void d3d12_update_viewport(d3d12_video_t *d3d12, bool force_full)
 {
+#ifdef HAVE_MISTER
+   /* See d3d11_update_viewport: this driver recomputes its viewport every
+    * frame and refreshes full_width/full_height from the window on every
+    * alive() poll, so the pin is re-asserted here rather than written once. */
+   if (d3d12->flags & D3D12_ST_FLAG_MISTER_PIN)
+   {
+      d3d12->vp.x           = 0;
+      d3d12->vp.y           = 0;
+      d3d12->vp.width       = d3d12->mister_w;
+      d3d12->vp.height      = d3d12->mister_h;
+      d3d12->vp.full_width  = d3d12->mister_w;
+      d3d12->vp.full_height = d3d12->mister_h;
+   }
+   else
+#endif
    video_driver_update_viewport(&d3d12->vp, force_full,
          (d3d12->flags & D3D12_ST_FLAG_KEEP_ASPECT) ? true : false, true);
 
@@ -2338,6 +2362,29 @@ static void d3d12_update_viewport(d3d12_video_t *d3d12, bool force_full)
 
    d3d12->flags              &= ~D3D12_ST_FLAG_RESIZE_VIEWPORT;
 }
+
+#ifdef HAVE_MISTER
+/* Pin the viewport to a MiSTer modeline; 0 for either dimension releases it. */
+void d3d12_mister_set_viewport(void *data, unsigned width, unsigned height)
+{
+   d3d12_video_t *d3d12 = (d3d12_video_t*)data;
+
+   if (!d3d12)
+      return;
+
+   if (!width || !height)
+   {
+      d3d12->flags &= ~D3D12_ST_FLAG_MISTER_PIN;
+      d3d12->flags |=  D3D12_ST_FLAG_RESIZE_VIEWPORT;
+      return;
+   }
+
+   d3d12->mister_w = width;
+   d3d12->mister_h = height;
+   d3d12->flags   |= D3D12_ST_FLAG_MISTER_PIN;
+   d3d12_update_viewport(d3d12, false);
+}
+#endif
 
 static void d3d12_free_shader_preset(d3d12_video_t* d3d12)
 {

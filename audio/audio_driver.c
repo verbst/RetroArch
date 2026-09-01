@@ -32,6 +32,10 @@
 
 #include "audio_driver.h"
 
+
+#ifdef HAVE_MISTER
+#include "../gfx/gfx_mister.h"
+#endif
 #include <retro_assert.h>
 #include <string/stdstring.h>
 #include <encodings/utf.h>
@@ -1533,6 +1537,15 @@ static void audio_driver_flush(audio_driver_state_t *audio_st,
                buf[i] = -1.0f;
          }
       }
+
+#ifdef HAVE_MISTER
+      /* Stream the same audio to the MiSTer.  Taken here, while the samples
+       * are still float and before the host-format branch below, so it does
+       * not matter whether the local driver wants float or s16 - the wire
+       * format is always s16 stereo.  Staged and sent with the next blit;
+       * gated internally on the session being live. */
+      mister_audio_push((const float*)output_data, output_frames);
+#endif
 
       /* If the audio driver supports float samples,
        * we don't have to do conversion */

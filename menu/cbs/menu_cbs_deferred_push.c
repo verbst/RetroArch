@@ -169,6 +169,10 @@ GENERIC_DEFERRED_PUSH(deferred_push_video_output_settings_list,    DISPLAYLIST_V
 GENERIC_DEFERRED_PUSH(deferred_push_video_scaling_settings_list,    DISPLAYLIST_VIDEO_SCALING_SETTINGS_LIST)
 GENERIC_DEFERRED_PUSH(deferred_push_video_hdr_settings_list,        DISPLAYLIST_VIDEO_HDR_SETTINGS_LIST)
 GENERIC_DEFERRED_PUSH(deferred_push_crt_switchres_settings_list,    DISPLAYLIST_CRT_SWITCHRES_SETTINGS_LIST)
+#ifdef HAVE_MISTER
+GENERIC_DEFERRED_PUSH(deferred_push_mister_settings_list,           DISPLAYLIST_MISTER_SETTINGS_LIST)
+GENERIC_DEFERRED_PUSH(deferred_push_mister_advanced_settings_list,  DISPLAYLIST_MISTER_ADVANCED_SETTINGS_LIST)
+#endif
 GENERIC_DEFERRED_PUSH(deferred_push_configuration_settings_list,    DISPLAYLIST_CONFIGURATION_SETTINGS_LIST)
 GENERIC_DEFERRED_PUSH(deferred_push_saving_settings_list,           DISPLAYLIST_SAVING_SETTINGS_LIST)
 GENERIC_DEFERRED_PUSH(deferred_push_cloud_sync_settings_list,       DISPLAYLIST_CLOUD_SYNC_SETTINGS_LIST)
@@ -708,6 +712,10 @@ static int menu_cbs_init_bind_deferred_push_compare_label(
       {MENU_ENUM_LABEL_DEFERRED_VIDEO_SCALING_SETTINGS_LIST, deferred_push_video_scaling_settings_list},
       {MENU_ENUM_LABEL_DEFERRED_VIDEO_HDR_SETTINGS_LIST, deferred_push_video_hdr_settings_list},
       {MENU_ENUM_LABEL_DEFERRED_CRT_SWITCHRES_SETTINGS_LIST, deferred_push_crt_switchres_settings_list},
+#ifdef HAVE_MISTER
+      {MENU_ENUM_LABEL_DEFERRED_MISTER_SETTINGS_LIST, deferred_push_mister_settings_list},
+      {MENU_ENUM_LABEL_DEFERRED_MISTER_ADVANCED_SETTINGS_LIST, deferred_push_mister_advanced_settings_list},
+#endif
       {MENU_ENUM_LABEL_DEFERRED_AUDIO_SETTINGS_LIST, deferred_push_audio_settings_list},
       {MENU_ENUM_LABEL_DEFERRED_AUDIO_SYNCHRONIZATION_SETTINGS_LIST, deferred_push_audio_synchronization_settings_list},
       {MENU_ENUM_LABEL_DEFERRED_AUDIO_OUTPUT_SETTINGS_LIST, deferred_push_audio_output_settings_list},
@@ -919,6 +927,10 @@ static int menu_cbs_init_bind_deferred_push_compare_label(
          { MENU_ENUM_LABEL_DEFERRED_VIDEO_HDR_SETTINGS_LIST, deferred_push_video_hdr_settings_list },
          { MENU_ENUM_LABEL_DEFERRED_VIDEO_SCALING_SETTINGS_LIST, deferred_push_video_scaling_settings_list },
          { MENU_ENUM_LABEL_DEFERRED_CRT_SWITCHRES_SETTINGS_LIST, deferred_push_crt_switchres_settings_list },
+#ifdef HAVE_MISTER
+         { MENU_ENUM_LABEL_DEFERRED_MISTER_SETTINGS_LIST, deferred_push_mister_settings_list },
+         { MENU_ENUM_LABEL_DEFERRED_MISTER_ADVANCED_SETTINGS_LIST, deferred_push_mister_advanced_settings_list },
+#endif
          { MENU_ENUM_LABEL_DEFERRED_CONFIGURATION_SETTINGS_LIST, deferred_push_configuration_settings_list },
          { MENU_ENUM_LABEL_DEFERRED_SAVING_SETTINGS_LIST, deferred_push_saving_settings_list },
          { MENU_ENUM_LABEL_DEFERRED_CLOUD_SYNC_SETTINGS_LIST, deferred_push_cloud_sync_settings_list },

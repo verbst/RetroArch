@@ -169,6 +169,9 @@ ui/drivers/qt/moc_*
 ui/drivers/moc_*
 
 obj-unix/
+
+# Build output: build/obj (intermediates), build/dist (staged payload).
+/build/
 .vagrant/
 
 # Visual Studio
@@ -296,3 +299,6 @@ gfx/drivers/rsx_shaders/modern_opaque.fpo
 gfx/drivers/rsx_shaders/modern_opaque.vpo
 pkg/psl1ght/pkg/USRDIR/shaders_cg/
 !pkg/psl1ght/pkg/USRDIR/system/
+
+# Local working notes
+.notes/

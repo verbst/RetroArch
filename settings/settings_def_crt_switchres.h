@@ -1,14 +1,20 @@
 /* Single-source definitions: CRT SwitchRes group.
  * Grammar identical to settings_def_video_sync.h plus S_FLOAT and
  * the _NS no-sublabel variants; the descriptor argument span
- * matches SDESC_<kind>_ROW; row order is menu display order;
- * h2json.py parses these rows for the Crowdin source upload. */
+ * matches SDESC_<kind>_ROW; h2json.py parses these rows for the Crowdin
+ * source upload.
+ *
+ * Row order here is NOT menu display order - it is registration order, and
+ * so the order settings land in retroarch.cfg. The pages are the
+ * hand-written build_list tables in menu/menu_displaylist.c, and a sublabel
+ * only appears if the setting is also mapped in menu/cbs/menu_cbs_sublabel.c.
+ * Kept in upstream's order so our diff against master stays one row. */
 
 S_UINT_EX(crt_switch_resolution, CRT_SWITCH_RESOLUTION,
       "crt_switch_resolution",
-      DEFAULT_CRT_SWITCH_RESOLUTION, SD_FLAG_ADVANCED, SDESC_RANGE_MINMAX, 0, CRT_SWITCH_NONE, CRT_SWITCH_INI, 1.0, 0, setting_action_ok_uint, setting_get_string_representation_uint_crt_switch_resolutions, NULL, NULL, NULL, NULL, ST_UI_TYPE_UINT_COMBOBOX,
+      DEFAULT_CRT_SWITCH_RESOLUTION, SD_FLAG_ADVANCED, SDESC_RANGE_MINMAX, 0, CRT_SWITCH_NONE, (CRT_SWITCH_LAST - 1), 1.0, 0, setting_action_ok_uint, setting_get_string_representation_uint_crt_switch_resolutions, NULL, NULL, NULL, NULL, ST_UI_TYPE_UINT_COMBOBOX,
       "CRT SwitchRes",
-      "For CRT displays only. Attempts to use exact core/game resolution and refresh rate.")
+      "For CRT displays only. Attempts to use exact core/game resolution and refresh rate. Picks the switchres monitor preset the modelines are generated for; INI takes the monitor definition from switchres.ini instead.")
 S_UINT_EX(crt_switch_resolution_super, CRT_SWITCH_RESOLUTION_SUPER,
       "crt_switch_resolution_super",
       DEFAULT_CRT_SWITCH_RESOLUTION_SUPER, SD_FLAG_ADVANCED, 0, 0, 0, 0, 0, 0, NULL, setting_get_string_representation_crt_switch_resolution_super, NULL, NULL, setting_uint_action_left_crt_switch_resolution_super, setting_uint_action_right_crt_switch_resolution_super, 0,
@@ -46,8 +52,20 @@ S_BOOL(crt_switch_custom_refresh_enable, CRT_SWITCH_RESOLUTION_USE_CUSTOM_REFRES
       false, SD_FLAG_NONE, 0, 0,
       "Custom Refresh Rate",
       "Use a custom refresh rate specified in the configuration file if needed.")
+/* On by default, which upstream's row is not.
+ *
+ * Upstream chose false when this was a demand: asking for a 640x480 menu on a
+ * preset that could not scan 480 progressive lines got you an interlaced one
+ * that flickered on every line of text. It is a preference now - unscannable
+ * means 320x240 and a log line - so the reason for the conservative default
+ * has gone, and the better menu is worth having wherever it fits. */
 S_BOOL(crt_switch_hires_menu, CRT_SWITCH_HIRES_MENU,
       "crt_switch_hires_menu",
-      false, SD_FLAG_NONE, 0, 0,
+      true, SD_FLAG_NONE, 0, 0,
       "Use High Resolution Menu",
-      "Switch to high resolution modeline for use with high-resolution menus when no content is loaded.")
+      "With no content loaded, prefer a 640x480 60 Hz menu modeline over 320x240. A preference rather than a demand: it needs a monitor preset that can scan 480 progressive lines, and where one cannot - a 15 kHz preset, which would otherwise answer with an interlaced mode that flickers on every line of text - 320x240 is used instead and the log says so. Safe to leave on.")
+S_BOOL(crt_switch_host_modeswitch, CRT_SWITCH_HOST_MODESWITCH,
+      "crt_switch_host_modeswitch",
+      DEFAULT_CRT_SWITCH_HOST_MODESWITCH, SD_FLAG_ADVANCED, 0, 0,
+      "Switch Host Display Mode",
+      "Apply the generated modelines to this PC's own display. Turn this on for an analog CRT wired to the graphics card - that is the case CRT SwitchRes was written for. Leave it off when the modelines are for something else, such as a MiSTer, where switching the desktop to a 15 kHz mode would only blank the monitor you are working on.")

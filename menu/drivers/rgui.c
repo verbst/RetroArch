@@ -64,6 +64,10 @@
 #include "../../audio/audio_driver.h"
 #endif
 
+#ifdef HAVE_MISTER
+#include "../../gfx/gfx_mister.h"
+#endif
+
 #if defined(GEKKO)
 /* Required for the Wii build, since we have
  * to query the hardware for the actual display
@@ -7284,6 +7288,13 @@ static void rgui_set_texture_frame(video_driver_state_t *video_st,
          && video_st->poke->set_texture_frame)
       video_st->poke->set_texture_frame(video_st->data,
             frame, rgb32, width, height, alpha);
+#ifdef HAVE_MISTER
+   /* The menu is composited separately from core video, so hand the MiSTer
+    * this bitmap directly; otherwise the CRT keeps showing the last frame
+    * while the menu is open. */
+   if (config_get_ptr()->bools.video_mister_enable)
+      mister_set_menu_buffer((void*)frame, width, height);
+#endif
 }
 
 static void rgui_set_texture(void *data)

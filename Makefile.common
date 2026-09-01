@@ -2721,6 +2721,30 @@ ifeq ($(HAVE_CRTSWITCHRES), 1)
    LIBS += -lstdc++
 endif
 
+# Groovy MiSTer output.  Streams frames, audio and inputs to a MiSTer FPGA over
+# UDP; the FPGA drives the CRT.  Depends on CRT mode switching for modelines,
+# enforced in qb/config.libs.sh.
+ifeq ($(HAVE_MISTER), 1)
+   INCLUDE_DIRS += -I$(DEPS_DIR)/mister
+   OBJ += gfx/gfx_mister.o \
+          input/drivers_joypad/mister_joypad.o \
+          input/drivers/mister_input.o \
+          $(DEPS_DIR)/mister/groovymister.o \
+          $(DEPS_DIR)/mister/groovymister_wrapper.o \
+          $(DEPS_DIR)/mister/nlc_codec.o \
+          $(DEPS_DIR)/mister/lz4/lz4.o \
+          $(DEPS_DIR)/mister/lz4/lz4hc.o
+   ifneq ($(findstring Win32,$(OS)),)
+      # Link the client in rather than building a DLL, so MODULE_API_GMW must
+      # not expand to __declspec(dllexport).
+      DEFINES += -DGROOVYMISTER_WIN32_STATIC
+      LIBS += -lws2_32
+   else
+      # nlc_codec.cpp encodes planes on std::thread.
+      LIBS += -lpthread
+   endif
+endif
+
 ifeq ($(HAVE_COMPRESSION), 1)
    DEFINES += -DHAVE_COMPRESSION
    OBJ     += tasks/task_decompress.o

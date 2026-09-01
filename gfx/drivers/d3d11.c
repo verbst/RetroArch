@@ -64,6 +64,9 @@
 #endif
 
 #include "../common/d3d_common.h"
+#ifdef HAVE_MISTER
+#include "../gfx_mister.h"
+#endif
 #include "../common/dxgi_common.h"
 #include <libretro.h>
 #include <libretro_d3d11.h>
@@ -112,6 +115,11 @@ enum d3d11_state_flags
     * luminance (RETRO_PIXEL_FORMAT_HDR10_2101010), so the HDR composition
     * must pass them through rather than encode them a second time. */
    D3D11_ST_FLAG_SOURCE_HDR10        = (1 << 18)
+#ifdef HAVE_MISTER
+   ,
+   /* Viewport pinned to a MiSTer modeline; see d3d11_mister_set_viewport. */
+   D3D11_ST_FLAG_MISTER_PIN          = (1 << 19)
+#endif
 };
 
 enum d3d11_feature_level_hint
@@ -329,6 +337,21 @@ typedef struct
    D3D11Buffer           menu_pipeline_vbo;
    math_matrix_4x4       mvp, mvp_last_pass, mvp_no_rot, identity;
    struct video_viewport vp;
+#ifdef HAVE_MISTER
+   unsigned              mister_w;
+   unsigned              mister_h;
+   /* Readback staging for the MiSTer stream, kept across frames. The copy is
+    * taken before Present because the swapchain is FLIP_DISCARD and the
+    * backbuffer contents are undefined afterwards; read_viewport then only
+    * maps and converts, with no second render of its own. */
+   D3D11Texture2D        mister_staging;
+   unsigned              mister_stage_w;
+   unsigned              mister_stage_h;
+   DXGI_FORMAT           mister_stage_fmt;
+   bool                  mister_captured;
+   bool                  mister_capture_ok;   /* a capture has succeeded at least once */
+   unsigned              mister_slow_frames;  /* frames that missed the fast path */
+#endif
    D3D11_VIEWPORT        viewport;
    D3D11_RECT            scissor;
    DXGI_FORMAT           format;
@@ -2025,6 +2048,23 @@ static void d3d11_gfx_set_rotation(void* data, unsigned rotation)
 
 static void d3d11_update_viewport(d3d11_video_t *d3d11, bool force_full)
 {
+#ifdef HAVE_MISTER
+   /* The MiSTer scans the modeline it was given, and read_viewport crops to
+    * this rect, so the two have to agree exactly. Unlike the GL and Vulkan
+    * drivers, this one recomputes its viewport every frame and refreshes
+    * full_width/full_height from the window on every alive() poll, so the pin
+    * has to be re-asserted here rather than written once into vp. */
+   if (d3d11->flags & D3D11_ST_FLAG_MISTER_PIN)
+   {
+      d3d11->vp.x           = 0;
+      d3d11->vp.y           = 0;
+      d3d11->vp.width       = d3d11->mister_w;
+      d3d11->vp.height      = d3d11->mister_h;
+      d3d11->vp.full_width  = d3d11->mister_w;
+      d3d11->vp.full_height = d3d11->mister_h;
+   }
+   else
+#endif
    video_driver_update_viewport(&d3d11->vp, force_full,
          (d3d11->flags & D3D11_ST_FLAG_KEEP_ASPECT) ? true : false, true);
 
@@ -2047,6 +2087,258 @@ static void d3d11_update_viewport(d3d11_video_t *d3d11, bool force_full)
 
    d3d11->flags              &= ~D3D11_ST_FLAG_RESIZE_VIEWPORT;
 }
+
+#ifdef HAVE_MISTER
+/* Pin the viewport to a MiSTer modeline. The frame is drawn into that rect at
+ * the top-left of the window and read straight back out of it, so the host
+ * window shows a modeline-sized image - the same trade the GL and Vulkan
+ * drivers make. Passing 0 for either dimension releases the pin. */
+void d3d11_mister_set_viewport(void *data, unsigned width, unsigned height)
+{
+   d3d11_video_t *d3d11 = (d3d11_video_t*)data;
+
+   if (!d3d11)
+      return;
+
+   if (!width || !height)
+   {
+      d3d11->flags &= ~D3D11_ST_FLAG_MISTER_PIN;
+      d3d11->flags |=  D3D11_ST_FLAG_RESIZE_VIEWPORT;
+      return;
+   }
+
+   d3d11->mister_w = width;
+   d3d11->mister_h = height;
+   d3d11->flags   |= D3D11_ST_FLAG_MISTER_PIN;
+   d3d11_update_viewport(d3d11, false);
+}
+
+/* Drop the alpha byte from a BGRA row. Reads 32 bits at a time rather than
+ * byte-wise, which matters at 640x480x60 on the streaming path. */
+/* Whether the packed shuffle below can be used. Checked once - cpu_features_get
+ * probes the CPU every call - following the pattern in state_manager.c. This is
+ * a processor feature and has nothing to do with which graphics card is
+ * present; SSSE3 has been on Intel since 2006 and AMD since 2011, but the
+ * scalar loops remain both the fallback and the reference. */
+static INLINE bool d3d11_have_ssse3(void)
+{
+   static int cached = -1;
+
+   if (cached < 0)
+      cached = (cpu_features_get() & RETRO_SIMD_SSSE3) ? 1 : 0;
+
+   return cached == 1;
+}
+
+#if defined(__SSSE3__) || defined(_M_X64) || defined(_M_IX86) || defined(__x86_64__) || defined(__i386__)
+#define D3D11_MISTER_HAVE_SHUFFLE 1
+#include <tmmintrin.h>
+
+/* Four 32-bit pixels in, twelve bytes out, per shuffle. The mask gathers the
+ * three wanted channels of each pixel into the low twelve bytes and discards
+ * the alpha; the top four lanes are set to 0x80, which _mm_shuffle_epi8 writes
+ * as zero and the next store overwrites. Writing 16 bytes for every 12 kept
+ * means the destination needs four bytes of slack, so the tail of each row is
+ * left to the scalar loop. */
+/* GCC and Clang will not emit SSSE3 in a translation unit that was not compiled
+ * for it, even behind a runtime check, so the instruction set is requested for
+ * this function alone. MSVC has no equivalent and needs none. */
+#if defined(__GNUC__) || defined(__clang__)
+__attribute__((target("ssse3")))
+#endif
+static void d3d11_shuffle_to_bgr24(uint8_t *dst, const uint8_t *src,
+      unsigned quads, const __m128i mask)
+{
+   unsigned i;
+
+   for (i = 0; i < quads; i++, dst += 12, src += 16)
+      _mm_storeu_si128((__m128i*)dst,
+            _mm_shuffle_epi8(_mm_loadu_si128((const __m128i*)src), mask));
+}
+#endif
+
+/* Same as below but for a source whose red and blue are the other way round. */
+static void d3d11_rgba_to_bgr24(uint8_t *dst, const uint8_t *src, unsigned count)
+{
+   unsigned i = 0;
+
+#ifdef D3D11_MISTER_HAVE_SHUFFLE
+   /* Four pixels short of the end, so the 16-byte stores stay in bounds. */
+   if (d3d11_have_ssse3() && count > 4)
+   {
+      const __m128i mask = _mm_setr_epi8(2, 1, 0, 6, 5, 4, 10, 9, 8,
+            14, 13, 12, (char)0x80, (char)0x80, (char)0x80, (char)0x80);
+      unsigned quads     = (count - 4) / 4;
+
+      d3d11_shuffle_to_bgr24(dst, src, quads, mask);
+      i    = quads * 4;
+      dst += (size_t)quads * 12;
+      src += (size_t)quads * 16;
+   }
+#endif
+
+   for (; i < count; i++, dst += 3, src += 4)
+   {
+      uint32_t px = *(const uint32_t*)src;
+
+      dst[0] = (uint8_t)((px >> 16) & 0xff);
+      dst[1] = (uint8_t)((px >>  8) & 0xff);
+      dst[2] = (uint8_t)( px        & 0xff);
+   }
+}
+
+static void d3d11_bgra_to_bgr24(uint8_t *dst, const uint8_t *src, unsigned count)
+{
+   unsigned i = 0;
+
+#ifdef D3D11_MISTER_HAVE_SHUFFLE
+   if (d3d11_have_ssse3() && count > 4)
+   {
+      /* Channel order already matches; this only drops the alpha byte. */
+      const __m128i mask = _mm_setr_epi8(0, 1, 2, 4, 5, 6, 8, 9, 10,
+            12, 13, 14, (char)0x80, (char)0x80, (char)0x80, (char)0x80);
+      unsigned quads     = (count - 4) / 4;
+
+      d3d11_shuffle_to_bgr24(dst, src, quads, mask);
+      i    = quads * 4;
+      dst += (size_t)quads * 12;
+      src += (size_t)quads * 16;
+   }
+#endif
+
+   for (; i < count; i++, dst += 3, src += 4)
+   {
+      uint32_t px = *(const uint32_t*)src;
+
+      dst[0] = (uint8_t)( px        & 0xff);
+      dst[1] = (uint8_t)((px >>  8) & 0xff);
+      dst[2] = (uint8_t)((px >> 16) & 0xff);
+   }
+}
+
+static void d3d11_mister_release_staging(d3d11_video_t *d3d11)
+{
+   if (d3d11->mister_staging)
+   {
+      d3d11->mister_staging->lpVtbl->Release(d3d11->mister_staging);
+      d3d11->mister_staging = NULL;
+   }
+   d3d11->mister_stage_w = 0;
+   d3d11->mister_stage_h = 0;
+   d3d11->mister_captured = false;
+}
+
+/* Copy the pinned viewport out of the back buffer into CPU-readable staging.
+ * Called from d3d11_gfx_frame with the frame fully composited but not yet
+ * presented, which is the only point where the back buffer is guaranteed to
+ * hold this frame under FLIP_DISCARD. Only the viewport rect is copied, not
+ * the whole back buffer. */
+static void d3d11_mister_capture(d3d11_video_t *d3d11)
+{
+   ID3D11Texture2D    *back_buffer = NULL;
+   ID3D11Resource     *back_res    = NULL;
+   ID3D11Resource     *stage_res   = NULL;
+   D3D11_TEXTURE2D_DESC desc;
+   D3D11_BOX           box;
+   unsigned            w           = d3d11->vp.width;
+   unsigned            h           = d3d11->vp.height;
+
+   d3d11->mister_captured = false;
+
+   if (!w || !h)
+      return;
+
+#ifdef __cplusplus
+   d3d11->swapChain->lpVtbl->GetBuffer(d3d11->swapChain, 0,
+         IID_ID3D11Texture2D, (void**)&back_buffer);
+#else
+   d3d11->swapChain->lpVtbl->GetBuffer(d3d11->swapChain, 0,
+         &IID_ID3D11Texture2D, (void*)&back_buffer);
+#endif
+   if (!back_buffer)
+      return;
+
+   back_buffer->lpVtbl->GetDesc(back_buffer, &desc);
+
+   /* Clamp before sizing the staging, not after, so the texture and the region
+    * copied into it always agree - otherwise a viewport briefly larger than
+    * the back buffer leaves the bottom rows of the staging never written. */
+   if (w > desc.Width)
+      w = desc.Width;
+   if (h > desc.Height)
+      h = desc.Height;
+
+   /* The window can be resized under us, and the modeline can change, so the
+    * staging is rebuilt whenever the rect or the format moves. */
+   if (     d3d11->mister_staging
+         && (   d3d11->mister_stage_w   != w
+             || d3d11->mister_stage_h   != h
+             || d3d11->mister_stage_fmt != desc.Format))
+      d3d11_mister_release_staging(d3d11);
+
+   if (!d3d11->mister_staging)
+   {
+      D3D11_TEXTURE2D_DESC sd = desc;
+
+      sd.Width          = w;
+      sd.Height         = h;
+      sd.MipLevels      = 1;
+      sd.ArraySize      = 1;
+      sd.Usage          = D3D11_USAGE_STAGING;
+      sd.BindFlags      = 0;
+      sd.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+      sd.MiscFlags      = 0;
+      sd.SampleDesc.Count   = 1;
+      sd.SampleDesc.Quality = 0;
+
+      d3d11->device->lpVtbl->CreateTexture2D(d3d11->device, &sd, NULL,
+            &d3d11->mister_staging);
+
+      if (!d3d11->mister_staging)
+      {
+         back_buffer->lpVtbl->Release(back_buffer);
+         return;
+      }
+
+      d3d11->mister_stage_w   = w;
+      d3d11->mister_stage_h   = h;
+      d3d11->mister_stage_fmt = desc.Format;
+   }
+
+   box.left   = 0;
+   box.top    = 0;
+   box.front  = 0;
+   box.right  = w;
+   box.bottom = h;
+   box.back   = 1;
+
+#ifdef __cplusplus
+   d3d11->mister_staging->lpVtbl->QueryInterface(d3d11->mister_staging,
+         IID_ID3D11Resource, (void**)&stage_res);
+   back_buffer->lpVtbl->QueryInterface(back_buffer,
+         IID_ID3D11Resource, (void**)&back_res);
+#else
+   d3d11->mister_staging->lpVtbl->QueryInterface(d3d11->mister_staging,
+         &IID_ID3D11Resource, (void**)&stage_res);
+   back_buffer->lpVtbl->QueryInterface(back_buffer,
+         &IID_ID3D11Resource, (void**)&back_res);
+#endif
+
+   if (stage_res && back_res)
+   {
+      d3d11->context->lpVtbl->CopySubresourceRegion(d3d11->context,
+            stage_res, 0, 0, 0, 0, back_res, 0, &box);
+      d3d11->mister_captured   = true;
+      d3d11->mister_capture_ok = true;
+   }
+
+   if (stage_res)
+      stage_res->lpVtbl->Release(stage_res);
+   if (back_res)
+      back_res->lpVtbl->Release(back_res);
+   back_buffer->lpVtbl->Release(back_buffer);
+}
+#endif
 
 static void d3d11_free_shader_preset(d3d11_video_t* d3d11)
 {
@@ -2884,8 +3176,13 @@ static void d3d11_gfx_free(void* data)
    if (!d3d11)
       return;
 
-   if (d3d11->flags & D3D11_ST_FLAG_WAITABLE_SWAPCHAINS)
+   if (d3d11->frameLatencyWaitableObject)
       CloseHandle(d3d11->frameLatencyWaitableObject);
+
+#ifdef HAVE_MISTER
+   d3d11_mister_release_staging(d3d11);
+
+#endif
 
 
 #ifdef HAVE_OVERLAY
@@ -4150,7 +4447,10 @@ static bool d3d11_gfx_frame(
            && swapchain_format == DXGI_FORMAT_R10G10B10A2_UNORM);
 #endif
 
-   if (d3d11->flags & D3D11_ST_FLAG_WAITABLE_SWAPCHAINS)
+   /* Test the handle, not the flag: it is only ever acquired on the vsync path
+    * (see the swapchain setup), so with vsync off the flag can still be set
+    * while the handle is NULL - which would wait on a null handle every frame. */
+   if (d3d11->frameLatencyWaitableObject)
       WaitForSingleObjectEx(
             d3d11->frameLatencyWaitableObject,
             1000,
@@ -5131,6 +5431,12 @@ static bool d3d11_gfx_frame(
    }
 #endif
 
+#ifdef HAVE_MISTER
+   /* Last point at which the back buffer still holds this frame. */
+   if (d3d11->flags & D3D11_ST_FLAG_MISTER_PIN)
+      d3d11_mister_capture(d3d11);
+#endif
+
    if (vsync && d3d11->wait_for_vblank < 0)
    {
       d3d11->context->lpVtbl->Flush(d3d11->context);
@@ -5640,6 +5946,133 @@ static bool d3d11_gfx_read_viewport(void* data, uint8_t* buffer, bool is_idle)
 
    if (!d3d11)
       return false;
+
+#ifdef HAVE_MISTER
+   /* Say so if the pin is up but no capture arrived. Everything below still
+    * works, but it costs a re-render and a second present per frame - roughly
+    * half the streamed frame rate - and the only other symptom is a slow
+    * picture, which looks like a dozen other things. Reachable if the
+    * swapchain is in an HDR format, or is neither RGBA8 nor BGRA8.
+    *
+    * Only once a capture has ever succeeded. The frame that applies a new
+    * modeline sets the pin from inside mister_draw, which runs after the
+    * present that would have captured it, so the first frame of every mode is
+    * legitimately without one and is not worth reporting.
+    *
+    * Counted rather than latched: one miss is a mode change, thousands is the
+    * fallback path running for the whole session, and the two should not read
+    * the same in a log. */
+   if (     (d3d11->flags & D3D11_ST_FLAG_MISTER_PIN)
+         && !d3d11->mister_captured
+         &&  d3d11->mister_capture_ok)
+   {
+      if (++d3d11->mister_slow_frames == 1)
+         mister_log_note("d3d11: no pre-present capture this frame, so it is "
+                         "being read back the slow way - a second render and a "
+                         "second present. Swapchain format %u.",
+               (unsigned)d3d11->mister_stage_fmt);
+      else if (d3d11->mister_slow_frames == 100)
+         mister_log_note("d3d11: 100 frames read back the slow way. This is "
+                         "the whole stream, not a mode change - expect about "
+                         "half the frame rate.");
+   }
+
+   /* While streaming, d3d11_gfx_frame has already copied this frame's viewport
+    * into persistent staging just before Present. Reuse it: that avoids the
+    * re-render video_driver_cached_frame() would trigger (a second full pass
+    * and a second Present, which halves the rate the core is driven at), and
+    * avoids allocating and copying a whole back buffer per frame. */
+   if (d3d11->mister_captured && d3d11->mister_staging)
+   {
+      ID3D11Resource *stage_res = NULL;
+      bool mister_ret           = false;
+      unsigned sw               = d3d11->mister_stage_w;
+      unsigned sh               = d3d11->mister_stage_h;
+
+      /* Consume it, so a released pin cannot keep handing back a stale
+       * frame - the next call falls through to the path below. */
+      d3d11->mister_captured    = false;
+
+      /* The caller sizes and strides its buffer from the viewport it read
+       * back, while the capture clamps the rect to the back buffer. The pin
+       * keeps the two equal, but a viewport briefly larger than the back
+       * buffer would make the driver write fewer bytes than the caller reads
+       * and set a row stride the caller does not share - an overrun under a
+       * sheared picture. Refuse instead: one dropped frame is recoverable,
+       * garbage geometry is not. */
+      if (     sw != d3d11->vp.width
+            || sh != d3d11->vp.height)
+         return false;
+
+#ifdef __cplusplus
+      d3d11->mister_staging->lpVtbl->QueryInterface(d3d11->mister_staging,
+            IID_ID3D11Resource, (void**)&stage_res);
+#else
+      d3d11->mister_staging->lpVtbl->QueryInterface(d3d11->mister_staging,
+            &IID_ID3D11Resource, (void**)&stage_res);
+#endif
+      if (!stage_res)
+         return false;
+
+      /* Timed in two halves. Map blocks until the GPU has retired the work
+       * behind this frame, so it measures how far ahead the core's own
+       * rendering is; the loop after it is pure CPU. Both are zero unless pace
+       * logging is on.
+       *
+       * The map stays here, after Present, rather than beside the copy in
+       * d3d11_mister_capture. Measured both ways: moving it ahead of the flip
+       * did not shorten the wait, it lengthened it, because the wait is the
+       * GPU finishing this frame rather than the flip, and mapping early
+       * discards the Present and OSD work that otherwise overlaps it. */
+      retro_time_t t_map0 = mister_readback_timing() ? cpu_features_get_time_usec() : 0;
+      retro_time_t t_map1 = 0;
+
+      if (SUCCEEDED(d3d11->context->lpVtbl->Map(d3d11->context,
+                  stage_res, 0, D3D11_MAP_READ, 0, &Map)))
+      {
+         const uint8_t *src = (const uint8_t*)Map.pData;
+
+         if (t_map0)
+            t_map1 = cpu_features_get_time_usec();
+
+         /* The staging is already cropped to the viewport, so there is no
+          * offset to apply here - only the swizzle and the row order. */
+         mister_ret = true;
+
+         switch (d3d11->mister_stage_fmt)
+         {
+            case DXGI_FORMAT_R8G8B8A8_UNORM:
+               for (y = 0; y < sh; y++, src += Map.RowPitch)
+                  d3d11_rgba_to_bgr24(buffer + 3 * (size_t)(sh - y - 1) * sw,
+                        src, sw);
+               break;
+
+            case DXGI_FORMAT_B8G8R8A8_UNORM:
+               for (y = 0; y < sh; y++, src += Map.RowPitch)
+                  d3d11_bgra_to_bgr24(buffer + 3 * (size_t)(sh - y - 1) * sw,
+                        src, sw);
+               break;
+
+            default:
+               mister_ret = false;
+               break;
+         }
+
+         if (t_map1)
+            mister_readback_split(
+                  (unsigned)(t_map1 - t_map0),
+                  (unsigned)(cpu_features_get_time_usec() - t_map1));
+
+         d3d11->context->lpVtbl->Unmap(d3d11->context, stage_res, 0);
+      }
+
+      stage_res->lpVtbl->Release(stage_res);
+
+      if (mister_ret)
+         return true;
+      /* Anything unexpected falls through to the general path below. */
+   }
+#endif
 
    /* Get the back buffer. */
    m_SwapChain = d3d11->swapChain;

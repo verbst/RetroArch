@@ -137,6 +137,9 @@ bool android_get_vfs_authorized_locations(
 #include "gfx/gfx_display.h"
 #include "gfx/gfx_thumbnail.h"
 #include "gfx/video_filter.h"
+#ifdef HAVE_MISTER
+#include "gfx/gfx_mister.h"
+#endif
 
 #include "input/input_osk.h"
 
@@ -4507,6 +4510,12 @@ void runloop_event_deinit_core(void)
    if (settings->bools.video_frame_delay_auto)
       video_st->frame_delay_target = 0;
 
+#ifdef HAVE_MISTER
+   /* Close before the drivers go, so the core stops holding the last frame on
+    * the CRT and returns to its own logo. */
+   mister_close();
+#endif
+
    driver_uninit(DRIVERS_CMD_ALL, (enum driver_lifetime_flags)0);
 
 #ifdef HAVE_CONFIGFILE
@@ -8061,7 +8070,18 @@ int runloop_iterate(void)
             runloop_st->frame_limit_minimum_time = 0;
             goto end;
          }
-         else if ((  (settings->bools.video_vsync)
+         /* Same correction as the limiter gate further down: the test has to be
+          * about whether vsync is actually pacing anything, not what the
+          * setting reads. Streaming to a MiSTer forces the driver to vsync-off
+          * regardless, so taking this branch left the menu with no frame limit
+          * at all - a hardware run produced 46,773 menu frames in 24 seconds
+          * and discarded 45,388 of them. This is the site that decides it; the
+          * one below only decides whether to act on what is decided here. */
+         else if ((  (settings->bools.video_vsync
+#ifdef HAVE_MISTER
+                      && !settings->bools.video_mister_enable
+#endif
+                     )
                   || (settings->bools.video_scanline_sync && video_st->scanline[SCANLINE_NEXT]))
                && (runloop_st->flags & RUNLOOP_FLAG_FOCUSED))
             goto end;
@@ -8202,12 +8222,35 @@ end:
    /* if there's a fast forward limit, inject sleeps to keep from going too fast. */
    {
       retro_time_t frame_limit_min = runloop_st->frame_limit_minimum_time;
+#ifdef HAVE_MISTER
+      /* While a modeline is live the MiSTer's raster is the frame clock, so
+       * stand our own limiter down rather than have the two beat against each
+       * other.  The raster wait itself happens on the sender thread now,
+       * reaching this loop as backpressure when it hands a frame over. */
+      if (     settings->bools.video_mister_enable
+            && mister_is_connected())
+      {
+         mister_sync();
+
+         if (mister_pacing_active())
+            frame_limit_min = 0;
+      }
+#endif
       if (   (frame_limit_min)
           && (   (vrr_runloop_enable)
               || (runloop_st->flags & RUNLOOP_FLAG_FASTMOTION)
 #ifdef HAVE_MENU
+              /* The vsync test has to be about what is actually happening, not
+               * what the setting says. Streaming to a MiSTer forces the driver
+               * to vsync-off whatever the setting reads, so trusting the
+               * setting here left the menu believing vsync was pacing it when
+               * nothing was - a hardware run produced 52,000 menu frames in
+               * sixteen seconds and threw away 51,000 of them. */
               || (menu_state_get_ptr()->flags & MENU_ST_FLAG_ALIVE
                   && (!(settings->bools.video_vsync)
+#ifdef HAVE_MISTER
+                      || settings->bools.video_mister_enable
+#endif
                       || !(runloop_st->flags & RUNLOOP_FLAG_FOCUSED)))
 #endif
               || (runloop_st->flags & RUNLOOP_FLAG_PAUSED)))

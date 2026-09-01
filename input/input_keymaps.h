@@ -238,6 +238,12 @@ extern enum retro_key rarch_keysym_lut[RETROK_LAST];
 extern const struct input_key_map input_config_key_map[];
 
 extern const struct rarch_key_map rarch_key_map_x11[];
+
+#ifdef HAVE_MISTER
+/* Keyboard attached to the MiSTer. Its PS/2 bitmap uses SDL scancode
+ * numbering, which is the USB HID usage table. */
+extern const struct rarch_key_map rarch_key_map_mister[];
+#endif
 extern const struct rarch_key_map rarch_key_map_sdl[];
 extern const struct rarch_key_map rarch_key_map_sdl2[];
 extern const struct rarch_key_map rarch_key_map_sdl3[];

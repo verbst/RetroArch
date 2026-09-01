@@ -115,6 +115,9 @@
 #endif
 #include "../retroarch.h"
 #include "../gfx/video_display_server.h"
+#ifdef HAVE_MISTER
+#include "../gfx/gfx_mister.h"
+#endif
 #ifdef HAVE_CHEATS
 #include "../cheat_manager.h"
 #endif
@@ -346,6 +349,9 @@ enum settings_list_type
    SETTINGS_LIST_CHEATS,
    SETTINGS_LIST_VIDEO,
    SETTINGS_LIST_CRT_SWITCHRES,
+#ifdef HAVE_MISTER
+   SETTINGS_LIST_MISTER,
+#endif
    SETTINGS_LIST_AUDIO,
 #ifdef HAVE_MICROPHONE
    SETTINGS_LIST_MICROPHONE,
@@ -7040,17 +7046,249 @@ static size_t setting_get_string_representation_uint_crt_switch_resolutions(
          case CRT_SWITCH_NONE:
             return strlcpy(s, msg_hash_to_str(MENU_ENUM_LABEL_VALUE_OFF), len);
          case CRT_SWITCH_15KHZ:
-            return strlcpy(s, "15 KHz", len);
+            return strlcpy(s, "Arcade 15.7 kHz - standard resolution", len);
          case CRT_SWITCH_31KHZ:
-            return strlcpy(s, "31 KHz, Standard", len);
+            return strlcpy(s, "Arcade 31.5 kHz - medium resolution", len);
          case CRT_SWITCH_32_120:
-            return strlcpy(s, "31 KHz, 120Hz", len);
+            return strlcpy(s, "PC CRT - 31.5 kHz / 120 Hz", len);
+         case CRT_SWITCH_ARCADE_15EX:
+            return strlcpy(s, "Arcade 15.7-16.5 kHz - extended resolution", len);
+         case CRT_SWITCH_ARCADE_25:
+            return strlcpy(s, "Arcade 25.0 kHz - medium resolution", len);
+         case CRT_SWITCH_ARCADE_15_25:
+            return strlcpy(s, "Arcade 15.7/25.0 kHz - dual-sync", len);
+         case CRT_SWITCH_ARCADE_15_31:
+            return strlcpy(s, "Arcade 15.7/31.5 kHz - dual-sync", len);
+         case CRT_SWITCH_ARCADE_15_25_31:
+            return strlcpy(s, "Arcade 15.7/25.0/31.5 kHz - tri-sync", len);
+         case CRT_SWITCH_GENERIC_15:
+            return strlcpy(s, "Generic 15.7 kHz", len);
+         case CRT_SWITCH_NTSC:
+            return strlcpy(s, "NTSC TV - 60 Hz / 525 lines", len);
+         case CRT_SWITCH_PAL:
+            return strlcpy(s, "PAL TV - 50 Hz / 625 lines", len);
+         case CRT_SWITCH_D9800:
+            return strlcpy(s, "Wells Gardner D9800 / D9400", len);
+         case CRT_SWITCH_D9200:
+            return strlcpy(s, "Wells Gardner D9200", len);
+         case CRT_SWITCH_K7000:
+            return strlcpy(s, "Wells Gardner K7000", len);
+         case CRT_SWITCH_K7131:
+            return strlcpy(s, "Wells Gardner 25K7131", len);
+         case CRT_SWITCH_M3129:
+            return strlcpy(s, "Wei-Ya M3129", len);
+         case CRT_SWITCH_M2929:
+            return strlcpy(s, "Makvision 2929D", len);
+         case CRT_SWITCH_H9110:
+            return strlcpy(s, "Hantarex MTC 9110 (Polo)", len);
+         case CRT_SWITCH_PSTAR:
+            return strlcpy(s, "Hantarex Polostar 25", len);
+         case CRT_SWITCH_MS2930:
+            return strlcpy(s, "Nanao MS-2930 / MS-2931", len);
+         case CRT_SWITCH_MS929:
+            return strlcpy(s, "Nanao MS9-29", len);
+         case CRT_SWITCH_R666B:
+            return strlcpy(s, "Rodotron 666B-29", len);
+         case CRT_SWITCH_PC_70_120:
+            return strlcpy(s, "PC CRT - 70 kHz / 120 Hz", len);
+         case CRT_SWITCH_VESA_480:
+            return strlcpy(s, "VESA GTF - up to 480 lines", len);
+         case CRT_SWITCH_VESA_600:
+            return strlcpy(s, "VESA GTF - up to 600 lines", len);
+         case CRT_SWITCH_VESA_768:
+            return strlcpy(s, "VESA GTF - up to 768 lines", len);
+         case CRT_SWITCH_VESA_1024:
+            return strlcpy(s, "VESA GTF - up to 1024 lines", len);
          case CRT_SWITCH_INI:
-            return strlcpy(s, "INI", len);
+            return strlcpy(s, "Custom - monitor from switchres.ini", len);
       }
    }
    return 0;
 }
+
+#ifdef HAVE_MISTER
+static size_t setting_get_string_representation_uint_mister_codec(
+      rarch_setting_t *setting, char *s, size_t len)
+{
+   if (setting)
+   {
+      switch (*setting->value.target.unsigned_integer)
+      {
+         case 0:
+            return strlcpy(s, "Raw (uncompressed)", len);
+         case 1:
+            return strlcpy(s, "LZ4", len);
+         case 2:
+            return strlcpy(s, "LZ4 + delta", len);
+         case 3:
+            return strlcpy(s, "LZ4 HC", len);
+         case 4:
+            return strlcpy(s, "LZ4 HC + delta", len);
+         case 5:
+            return strlcpy(s, "LZ4 adaptive", len);
+         case 6:
+            return strlcpy(s, "LZ4 adaptive + delta", len);
+         case 7:
+            return strlcpy(s, "NLC (recommended)", len);
+      }
+   }
+   return 0;
+}
+
+static size_t setting_get_string_representation_uint_mister_nlc_pack(
+      rarch_setting_t *setting, char *s, size_t len)
+{
+   if (setting)
+   {
+      switch (*setting->value.target.unsigned_integer)
+      {
+         case 1:
+            return strlcpy(s, "Tiled", len);
+         case 2:
+            return strlcpy(s, "Rice (recommended)", len);
+      }
+   }
+   return 0;
+}
+
+static size_t setting_get_string_representation_uint_mister_nlc_near(
+      rarch_setting_t *setting, char *s, size_t len)
+{
+   if (setting)
+   {
+      switch (*setting->value.target.unsigned_integer)
+      {
+         case 0:
+            return strlcpy(s, "Lossless", len);
+         case 1:
+            return strlcpy(s, "Near-lossless +/-1 (recommended)", len);
+         case 2:
+            return strlcpy(s, "Near-lossless +/-2", len);
+         case 3:
+            return strlcpy(s, "Near-lossless +/-3", len);
+      }
+   }
+   return 0;
+}
+
+static size_t setting_get_string_representation_uint_mister_rgb_mode(
+      rarch_setting_t *setting, char *s, size_t len)
+{
+   if (setting)
+   {
+      switch (*setting->value.target.unsigned_integer)
+      {
+         case 0:
+            return strlcpy(s, "RGB888 (24-bit)", len);
+         case 1:
+            /* Unreachable from the menu - the row steps by 2 - but a config
+            * file can hold a 1, and the row would then name a mode we clamp
+            * away before it ever reaches the wire. */
+            return strlcpy(s, "RGBA8888 (32-bit) - not supported", len);
+         case 2:
+            return strlcpy(s, "RGB565 (16-bit) - Raw and LZ4 only", len);
+      }
+   }
+   return 0;
+}
+
+static size_t setting_get_string_representation_uint_mister_mtu(
+      rarch_setting_t *setting, char *s, size_t len)
+{
+   if (setting)
+   {
+      if (*setting->value.target.unsigned_integer >= 3800)
+         return strlcpy(s, "Jumbo frames (3800)", len);
+      return strlcpy(s, "Standard (1500)", len);
+   }
+   return 0;
+}
+
+static size_t setting_get_string_representation_uint_crt_switch_mode_priority(
+      rarch_setting_t *setting, char *s, size_t len)
+{
+   if (setting)
+   {
+      switch (*setting->value.target.unsigned_integer)
+      {
+         case CRT_SWITCH_MODE_KEEP_RESOLUTION:
+            return strlcpy(s, "Keep Resolution", len);
+         case CRT_SWITCH_MODE_KEEP_REFRESH:
+            return strlcpy(s, "Keep Refresh Rate", len);
+      }
+   }
+   return 0;
+}
+
+/* 0 is Unlimited rather than 0%, which is not an arbitrary choice: the code
+ * already reads a tolerance of zero as "no cap" (crt_refresh_differs), so
+ * putting the special value at the bottom leaves the behaviour and every
+ * existing config exactly as they are. Moving it to the top would have
+ * inverted the meaning of a stored 0. */
+static size_t setting_get_string_representation_uint_crt_switch_refresh_tolerance(
+      rarch_setting_t *setting, char *s, size_t len)
+{
+   if (setting)
+   {
+      unsigned v = *setting->value.target.unsigned_integer;
+
+      if (v == 0)
+         return strlcpy(s, "Unlimited", len);
+      return (size_t)snprintf(s, len, "%u%%", v);
+   }
+   return 0;
+}
+
+static size_t setting_get_string_representation_uint_crt_switch_scan_mode(
+      rarch_setting_t *setting, char *s, size_t len)
+{
+   if (setting)
+   {
+      switch (*setting->value.target.unsigned_integer)
+      {
+         case CRT_SCAN_MODE_AUTO:
+            return strlcpy(s, "Interlaced & Progressive", len);
+         case CRT_SCAN_MODE_PROGRESSIVE:
+            return strlcpy(s, "Progressive Only", len);
+      }
+   }
+   return 0;
+}
+
+static size_t setting_get_string_representation_uint_mister_pacing(
+      rarch_setting_t *setting, char *s, size_t len)
+{
+   if (setting)
+   {
+      switch (*setting->value.target.unsigned_integer)
+      {
+         case 0:
+            return strlcpy(s, "MiSTer CRT raster", len);
+         case 1:
+            return strlcpy(s, "RetroArch frame limiter", len);
+      }
+   }
+   return 0;
+}
+
+static size_t setting_get_string_representation_uint_mister_log_level(
+      rarch_setting_t *setting, char *s, size_t len)
+{
+   if (setting)
+   {
+      switch (*setting->value.target.unsigned_integer)
+      {
+         case 0:
+            return strlcpy(s, "Errors and setup only", len);
+         case 1:
+            return strlcpy(s, "Add frame pacing telemetry", len);
+         case 2:
+            return strlcpy(s, "Full (every frame)", len);
+      }
+   }
+   return 0;
+}
+#endif
 
 static size_t setting_get_string_representation_uint_audio_resampler_quality(
       rarch_setting_t *setting, char *s, size_t len)
@@ -7981,6 +8219,9 @@ static const enum settings_list_type settings_list_build_order[] =
       SETTINGS_LIST_CHEATS,
       SETTINGS_LIST_VIDEO,
       SETTINGS_LIST_CRT_SWITCHRES,
+#ifdef HAVE_MISTER
+      SETTINGS_LIST_MISTER,
+#endif
       SETTINGS_LIST_AUDIO,
 #ifdef HAVE_MICROPHONE
       SETTINGS_LIST_MICROPHONE,
@@ -8885,6 +9126,47 @@ static void write_handler_logging_verbosity(rarch_setting_t *setting)
       command_event(rarch_cmd, NULL);
 }
 
+#ifdef HAVE_MISTER
+/* The MiSTer controller driver is a wrapper: it adds the MiSTer's two pads on
+ * top of an ordinary joypad driver, so this PC's own controllers keep working.
+ * RetroArch picks the joypad driver by an exact name match, so the wrapper only
+ * ever runs when it is the selected driver - which is what makes Use MiSTer
+ * Controllers do anything at all. Select it while both options are on, and hand
+ * the wrapped driver back when either goes off.
+ *
+ * The outgoing driver is remembered as the one to wrap, so the user's own
+ * choice survives the round trip. An explicit Wrapped Controller Driver is
+ * never overwritten. */
+static void mister_sync_joypad_driver(settings_t *settings)
+{
+   bool want = settings->bools.video_mister_enable
+            && settings->bools.mister_use_inputs;
+   bool have = string_is_equal(settings->arrays.input_joypad_driver, "mister");
+
+   if (want == have)
+      return;
+
+   if (want)
+   {
+      if (string_is_empty(settings->arrays.mister_joypad_host_driver))
+         configuration_set_string(settings,
+               settings->arrays.mister_joypad_host_driver,
+               settings->arrays.input_joypad_driver);
+
+      configuration_set_string(settings,
+            settings->arrays.input_joypad_driver, "mister");
+   }
+   else
+      configuration_set_string(settings,
+            settings->arrays.input_joypad_driver,
+            string_is_empty(settings->arrays.mister_joypad_host_driver)
+                  ? config_get_default_joypad()
+                  : settings->arrays.mister_joypad_host_driver);
+
+   command_event(CMD_EVENT_REINIT, NULL);
+}
+#endif
+
 static void general_write_handler(rarch_setting_t *setting)
 {
    enum event_command rarch_cmd = CMD_EVENT_NONE;
@@ -8908,6 +9190,42 @@ static void general_write_handler(rarch_setting_t *setting)
          else
             task_queue_unset_threaded();
          break;
+#ifdef HAVE_MISTER
+      case MENU_ENUM_LABEL_VIDEO_MISTER_ENABLE:
+         /* The MiSTer takes its modeline from switchres, so with CRT SwitchRes
+          * off there is nothing to stream and the session would sit there
+          * failing. Pick a sensible preset on the user's behalf the first time
+          * this is switched on, so setting the address and this toggle is the
+          * whole of the setup. Only when it is Off - an existing choice is
+          * never overwritten. */
+         if (*setting->value.target.boolean)
+            mister_retry();
+         else
+            /* Turning it off has to actually drop the session. mister_draw is
+             * gated on this setting, so frames simply stop - but the session
+             * stays open, the sender thread keeps it alive, and the CRT holds
+             * the last frame with no way to get it back short of restarting. */
+            mister_close();
+
+         if (     *setting->value.target.boolean
+               && settings->uints.crt_switch_resolution == CRT_SWITCH_NONE)
+         {
+            const char *_msg =
+               "CRT SwitchRes set to Arcade 15.7 kHz for MiSTer output";
+            configuration_set_uint(settings,
+                  settings->uints.crt_switch_resolution, CRT_SWITCH_15KHZ);
+            runloop_msg_queue_push(_msg, strlen(_msg), 1, 180, true, NULL,
+                  MESSAGE_QUEUE_ICON_DEFAULT, MESSAGE_QUEUE_CATEGORY_INFO);
+         }
+
+         mister_sync_joypad_driver(settings);
+         break;
+      case MENU_ENUM_LABEL_MISTER_USE_INPUTS:
+         /* Same selection, driven from the other toggle - either one can be
+          * the last to be switched on. */
+         mister_sync_joypad_driver(settings);
+         break;
+#endif
 #ifndef HAVE_LAKKA
       case MENU_ENUM_LABEL_GAMEMODE_ENABLE:
          if (frontend_driver_has_gamemode())
@@ -11755,6 +12073,13 @@ static const setting_desc_t crt_switchres_desc_0[] = {
 /* GENERATED: rows come from settings_def_crt_switchres.h in order. */
 #include "../settings/settings_def_crt_switchres.h"
 };
+
+#ifdef HAVE_MISTER
+static const setting_desc_t mister_desc_0[] = {
+/* GENERATED: rows come from settings_def_mister.h in order. */
+#include "../settings/settings_def_mister.h"
+};
+#endif
 
 static const setting_desc_t menu_sounds_desc_0[] = {
 /* GENERATED: rows come from settings_def_menu_sounds.h in order. */
@@ -17406,6 +17731,13 @@ static const settings_build_entry_t settings_build_registry[] = {
      MENU_ENUM_LABEL_VALUE_CRT_SWITCHRES_SETTINGS,
      MENU_ENUM_LABEL_CRT_SWITCHRES_SETTINGS,
      MENU_ENUM_LABEL_SETTINGS },
+#ifdef HAVE_MISTER
+   { SETTINGS_LIST_MISTER, NULL,
+     mister_desc_0, (unsigned)ARRAY_SIZE(mister_desc_0),
+     MENU_ENUM_LABEL_VALUE_MISTER_SETTINGS,
+     MENU_ENUM_LABEL_MISTER_SETTINGS,
+     MENU_ENUM_LABEL_SETTINGS },
+#endif
    { SETTINGS_LIST_MENU_SOUNDS, NULL,
      menu_sounds_desc_0, (unsigned)ARRAY_SIZE(menu_sounds_desc_0),
      MENU_ENUM_LABEL_VALUE_MENU_SOUNDS,

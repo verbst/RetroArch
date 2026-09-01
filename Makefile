@@ -31,7 +31,19 @@ DEFINES += -DASSETS_DIR='"$(DESTDIR)$(ASSETS_DIR)"'
 DEFINES += -DFILTERS_DIR='"$(DESTDIR)$(FILTERS_DIR)"'
 DEFINES += -DCORE_INFO_DIR='"$(DESTDIR)$(CORE_INFO_DIR)"'
 
-OBJDIR_BASE := obj-unix
+# Build output lives under build/ so the source tree stays clean and the
+# distributable payload is in one clearly named place.  Both are gitignored.
+#   build/obj-<os>  intermediate objects and dependency files
+#   build/dist      staged binary (+ runtime DLLs on Windows), see `make dist`
+#
+# The object directory carries the OS because one checkout is commonly built
+# from more than one environment (MSYS2 and WSL on the same Windows box).  The
+# generated .d files embed absolute paths, and a Windows "C:/..." path makes
+# GNU make on Linux fail with "multiple target patterns" when it parses the
+# drive-letter colon as a rule separator.  Separate directories keep the two
+# from ever reading each other's dependency files.
+OBJDIR_BASE := build/obj-$(if $(OS),$(OS),unknown)
+DISTDIR     := build/dist
 
 ifeq ($(NEED_GOLD_LINKER), 1)
    LDFLAGS += -fuse-ld=gold
@@ -351,7 +363,8 @@ uninstall:
 clean:
 	@$(if $(Q), echo $@,)
 	$(Q)rm -rf $(OBJDIR_BASE)
-	$(Q)rm -f $(TARGET)
+	$(Q)rm -rf $(DISTDIR)
+	$(Q)rm -f $(TARGET) $(TARGET).exe
 	$(Q)rm -f *.d
 	$(Q)rm -f default.metallib gfx/common/metal/*.air
 	$(Q)rm -rf $(BUNDLE)
@@ -475,7 +488,59 @@ bundle: $(TARGET) $(METALLIB)
 
 endif
 
-.PHONY: all install uninstall clean
+# ---------------------------------------------------------------------------
+# make dist — stage the distributable payload into $(DISTDIR).
+#
+# The binary alone is not runnable on Windows: a MSYS2/mingw build links
+# against DLLs that live in the toolchain prefix, so they are collected
+# alongside it here.  Mirrors what .github/workflows/MSYS2.yml does.
+# ---------------------------------------------------------------------------
+dist: $(TARGET)
+	@$(if $(Q), echo $@,)
+	$(Q)rm -rf $(DISTDIR)
+	$(Q)mkdir -p $(DISTDIR)
+	$(Q)if [ -f "$(TARGET).exe" ]; then \
+		cp "$(TARGET).exe" "$(DISTDIR)/"; \
+	else \
+		cp "$(TARGET)" "$(DISTDIR)/"; \
+	fi
+	@# Deliberately a read loop rather than xargs: on MSYS2 xargs sizes its
+	@# command against ARG_MAX minus the environment, and the shell's
+	@# environment is large enough there that it bails with "environment is
+	@# too large for exec" before copying anything.
+	$(Q)if [ -f "$(TARGET).exe" ] && [ -n "$$MINGW_PREFIX" ]; then \
+		ldd "$(TARGET).exe" \
+			| grep -i "$$MINGW_PREFIX" \
+			| sed -e 's/.*=> //' -e 's/ (0x[0-9a-fA-F]*)$$//' \
+			| while read -r dll; do \
+				[ -f "$$dll" ] && cp -u "$$dll" "$(DISTDIR)/"; \
+			done; \
+	fi
+	@# Runtime data this repo actually carries.  The filter .filt/.dsp files are
+	@# text descriptors; the shared objects they name are built separately by
+	@# `make -C gfx/video_filters` and `make -C libretro-common/audio/dsp_filters`,
+	@# and are copied too when present.
+	$(Q)mkdir -p "$(DISTDIR)/filters/video" "$(DISTDIR)/filters/audio"
+	$(Q)cp gfx/video_filters/*.filt "$(DISTDIR)/filters/video/" 2>/dev/null || true
+	$(Q)cp gfx/video_filters/*.dll gfx/video_filters/*.so \
+		"$(DISTDIR)/filters/video/" 2>/dev/null || true
+	$(Q)cp libretro-common/audio/dsp_filters/*.dsp \
+		"$(DISTDIR)/filters/audio/" 2>/dev/null || true
+	$(Q)cp libretro-common/audio/dsp_filters/*.dll \
+		libretro-common/audio/dsp_filters/*.so \
+		"$(DISTDIR)/filters/audio/" 2>/dev/null || true
+	$(Q)cp retroarch.cfg "$(DISTDIR)/" 2>/dev/null || true
+	@echo "Staged $(DISTDIR):"
+	@ls -1 $(DISTDIR)
+	@echo ""
+	@echo "NOT included (not present in this repo, fetch separately):"
+	@echo "  assets/   menu assets      - RetroArch can download these at runtime"
+	@echo "  cores/    libretro cores"
+	@echo "  info/     core info files"
+
+.PHONY: dist
+
+.PHONY: all install uninstall clean dist
 
 print-%:
 	@echo '$*=$($*)'

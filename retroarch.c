@@ -196,6 +196,9 @@
 
 #include "gfx/video_driver.h"
 #include "gfx/video_display_server.h"
+#ifdef HAVE_MISTER
+#include "gfx/gfx_mister.h"
+#endif
 #ifdef HAVE_THREADS
 #include "gfx/video_thread_wrapper.h"
 #endif
@@ -1464,6 +1467,27 @@ static void driver_adjust_system_rates(
    if (input_sample_rate > 0.0)
    {
       audio_driver_state_t *audio_st      = audio_state_get_ptr();
+      float audio_skew_limit              = audio_max_timing_skew;
+
+      /* The skew limit exists to stop a display whose refresh has nothing to do
+       * with the core - a 144 Hz panel against a 60 fps core - from driving a
+       * pathological resample ratio. Under CRT SwitchRes the opposite is true:
+       * the modeline was generated *for* this core and is what the frame loop is
+       * actually paced at, so whatever gap remains is a real rate the audio has
+       * to follow rather than a misconfiguration to ignore.
+       *
+       * Without this, a core that cannot be given its exact refresh goes
+       * uncorrected: a 59.94 fps core granted a 56.842 Hz modeline skews 5.45%,
+       * just past the 5% default, so the ratio stays at 1.0 while the core
+       * really is producing ~4.7% fewer samples per second than the device
+       * consumes - an underrun every second or so, for the whole session.
+       *
+       * Note this is deliberately not the same substitution the video side
+       * makes below (timing_skew_hz = input_fps). Doing that here would give a
+       * ratio of exactly 1.0, which is the broken behaviour, not the fix. */
+      if (video_st->flags & VIDEO_FLAG_CRT_SWITCHING_ACTIVE)
+         audio_skew_limit = 1.0f;
+
       if (vrr_runloop_enable)
          audio_st->input = input_sample_rate;
       else
@@ -1475,7 +1499,7 @@ static void driver_adjust_system_rates(
                   video_swap_interval,
                   black_frame_insertion,
                   shader_subframes,
-                  audio_max_timing_skew);
+                  audio_skew_limit);
 
       RARCH_LOG("[Audio] Set audio input rate to: %.2f Hz.\n",
             audio_st->input);
@@ -1546,6 +1570,16 @@ void driver_set_nonblock_state(void)
    bool audio_sync             = settings->bools.audio_sync;
    bool video_vsync            = settings->bools.video_vsync;
    bool adaptive_vsync         = settings->bools.video_adaptive_vsync;
+#ifdef HAVE_MISTER
+   /* Same override as video_driver_init_internal: while streaming, the MiSTer's
+    * raster is the frame clock, and blocking on the host display's refresh as
+    * well costs a vblank per presented frame. It has to be repeated here
+    * because this function re-derives the state from video_vsync on core load,
+    * pause and fast-forward toggles, and would otherwise undo the override the
+    * moment a core starts. */
+   if (settings->bools.video_mister_enable)
+      video_vsync              = false;
+#endif
    unsigned swap_interval      = runloop_get_video_swap_interval(
          settings->uints.video_swap_interval);
    bool video_driver_active    = (video_st->flags  & VIDEO_FLAG_ACTIVE) ? true : false;
@@ -6276,6 +6310,13 @@ void main_exit(void *args)
       menu_st->flags &= ~MENU_ST_FLAG_DATA_OWN;
 #endif
    retroarch_ctl(RARCH_CTL_MAIN_DEINIT, NULL);
+
+#ifdef HAVE_MISTER
+   /* Also closed from runloop_event_deinit_core, but that only runs when a core
+    * was loaded. Quitting from the menu otherwise left the session to time out
+    * on the core's side and wrote no summary to the log. Idempotent. */
+   mister_close();
+#endif
 
    if (runloop_st->perfcnt_enable)
    {
