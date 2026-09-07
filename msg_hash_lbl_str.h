@@ -1324,6 +1324,7 @@
 #define MENU_ENUM_LABEL_MISTER_PACING_STR "mister_pacing"
 #define MENU_ENUM_LABEL_MISTER_RGB_MODE_STR "mister_rgb_mode"
 #define MENU_ENUM_LABEL_MISTER_RUMBLE_STR "mister_rumble"
+#define MENU_ENUM_LABEL_MISTER_ALLOW_IDLE_TIMEOUT_STR "mister_allow_idle_timeout"
 #define MENU_ENUM_LABEL_MISTER_SETTINGS_STR "mister_settings"
 #define MENU_ENUM_LABEL_MISTER_USE_INPUTS_STR "mister_use_inputs"
 #define MENU_ENUM_LABEL_MOUSE_ENABLE_STR "menu_mouse_enable"

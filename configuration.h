@@ -923,6 +923,7 @@ typedef struct settings
       bool mister_interlaced_fb;
       bool mister_use_inputs;
       bool mister_rumble;
+      bool mister_allow_idle_timeout;
 
       /* Netplay */
       bool netplay_show_only_connectable;
