@@ -74,6 +74,11 @@ S_BOOL(mister_rumble, MISTER_RUMBLE,
       DEFAULT_MISTER_RUMBLE, SD_FLAG_ADVANCED, 0, CMD_EVENT_NONE,
       "MiSTer Rumble",
       "Send force feedback to MiSTer-attached controllers. Needs a core new enough to negotiate it, and the per-controller Rumble option on the MiSTer side.")
+S_BOOL(mister_allow_idle_timeout, MISTER_ALLOW_IDLE_TIMEOUT,
+      "mister_allow_idle_timeout",
+      DEFAULT_MISTER_ALLOW_IDLE_TIMEOUT, SD_FLAG_ADVANCED, 0, CMD_EVENT_NONE,
+      "Allow Idle Timeout",
+      "Let the MiSTer reclaim the CRT when RetroArch stops sending, after a crash or a network drop. Off holds the last frame until something reconnects.")
 /* Same as mister_ip: the generated string row is emitted into the int table by
  * the configuration pass, so every S_STRING in settings/ is excluded from it
  * and registered literally in configuration.c instead. */

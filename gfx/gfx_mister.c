@@ -71,12 +71,19 @@
  * retried every frame. */
 #define MISTER_RETRY_USEC  (2 * 1000000)
 
-/* The core drops an idle session after 5s by default; stay well inside it. */
-#define MISTER_KEEPALIVE_USEC (2 * 1000000)
+/* One keepalive per half the core's idle timeout, shortest 5s. The send waits
+ * on the sender thread's 500ms idle wake, so the real interval is this plus up
+ * to half a second. Sent whatever Allow Idle Timeout says. */
+#define MISTER_KEEPALIVE_USEC (1500 * 1000)
 
 /* Shortest gap between two "not blitting" / "blitting again" lines. Without
  * this a core running at half the modeline's rate logs an edge every frame. */
 #define MISTER_STALL_LOG_USEC (2 * 1000000)
+
+/* Frame periods with no frame at all before the log says so. The stall
+ * counters only cover frames this driver was given; this covers the case they
+ * cannot see, where it is not called at all. */
+#define MISTER_NOFRAME_PERIODS 4
 
 /* Audio staged between the audio path and the next blit. CmdAudio takes a
  * uint16 byte count, and one frame at 48kHz/60Hz is only 800 sample frames,
@@ -87,11 +94,25 @@
  * this, and a hardware run threw away 9-15% of the audio by overrunning it. */
 #define MISTER_AUDIO_MAX_FRAMES 16383
 
-/* Staged frames past which the sender is woken rather than left to its own
- * cadence. Roughly half the buffer, so a flush is asked for well before there
- * is any danger of losing samples. */
-#define MISTER_AUDIO_WATERMARK  8192
+/* The most one CmdAudio may carry. The core stages audio between AUDIO_OFFSET
+ * 0x32a000 and LZ4_OFFSET_A 0x332000 - 32768 bytes, or 8192 stereo frames -
+ * and does not bound the copy into it. Anything longer overwrites the buffer
+ * the next frame is decoded from. */
+#define MISTER_AUDIO_PACKET_FRAMES 8192
 #define MISTER_AUDIO_MAX_BYTES  (MISTER_AUDIO_MAX_FRAMES * 2 * (int)sizeof(int16_t))
+
+/* Staged frames past which the sender is woken rather than left to its own
+ * cadence. One frame's worth of sound, taken from the modeline, so a stalled
+ * core cannot turn the stream into bursts the FPGA's FIFO has to ride out.
+ * Floored so a nonsense modeline cannot drive it to zero. */
+#define MISTER_AUDIO_WATERMARK_MIN 64
+static size_t mister_audio_watermark = MISTER_AUDIO_PACKET_FRAMES;
+
+/* Rate servo, see the state it drives further down. SERVO_FRAMES is how long
+ * it takes to pay off a standing offset, in displayed frames - two seconds at
+ * 60 Hz. SERVO_LIMIT holds the correction under nine cents. */
+#define MISTER_AUDIO_SERVO_FRAMES 120.0
+#define MISTER_AUDIO_SERVO_LIMIT  0.005
 
 /* Reasons a frame did not reach the wire. Logged on transition rather than per
  * frame: a steady state costs one line, and "we stopped blitting, and why" is
@@ -165,6 +186,11 @@ typedef struct
    bool      in_readback; /* re-entrancy guard, see mister_draw           */
    uint8_t   stall;       /* enum mister_stall, current reason for not blitting */
    retro_time_t last_stall_log; /* rate limit for the transition lines */
+   /* Written by the frame loop, read by the sender's idle path - the only
+    * thing still running when the frame loop produces nothing. Unsynchronised:
+    * a stale read costs a log line a tick late. */
+   retro_time_t last_draw_usec; /* when this driver was last handed a frame */
+   bool      draw_gap_open;     /* a no-frame stretch has been reported      */
    /* Previous frame's shape, so the letterbox border can be cleared whenever
     * anything about what is staged changes. */
    unsigned  last_stage_w;
@@ -179,14 +205,11 @@ typedef struct
    uint64_t  stat_dropped[MISTER_STALL_LAST];
    uint64_t  stat_audio_frames;
 
-   /* Three different faults, kept apart because they need different fixes:
-    * overrun is the staging buffer filling faster than the sender empties it,
-    * nobuf is the client having no audio buffer to hand us, and clamp is the
-    * 16-bit length ceiling. They shared one counter and that made a 9-15% loss
-    * on hardware unattributable. */
+   /* Kept apart because they need different fixes: overrun is the staging
+    * buffer filling faster than the sender empties it, nobuf is the client
+    * having no audio buffer to hand us. */
    uint64_t  stat_audio_drop_overrun;
    uint64_t  stat_audio_drop_nobuf;
-   uint64_t  stat_audio_drop_clamp;
 } mister_state_t;
 
 static mister_state_t     mister_st;
@@ -609,6 +632,30 @@ static size_t   mister_stage_size;
 
 static int16_t *mister_audio_buf;      /* staged s16 stereo, interleaved */
 static size_t   mister_audio_frames;   /* sample frames currently staged   */
+static int16_t *mister_audio_scratch;  /* converted input, only when resampling */
+
+/* Rate servo.
+ *
+ * What reaches mister_audio_push() has been through RetroArch's resampler,
+ * which is servoed to the local sound card. The MiSTer plays out on its own
+ * clock and reports no buffer level, so a difference between the two is
+ * uncorrected and accumulates. Measured at 0.23% on hardware, against a core
+ * FIFO that is prefilled once with at most 2100 samples and never topped up.
+ *
+ * The one clock both sides can see is the core's displayed-frame counter. It
+ * consumes mister_audio_spf sample frames per frame displayed, so the running
+ * difference between that and what we have sent is measurable with no host
+ * clock at all, and a small correction to the resampling step holds it. */
+static double   mister_audio_spf;        /* frames consumed per displayed frame */
+static double   mister_audio_ratio = 1.0;/* output frames per input frame       */
+static double   mister_audio_phase;      /* fractional read position, carried   */
+static int16_t  mister_audio_hold[2];    /* last input frame, for interpolation */
+static bool     mister_audio_hold_valid; /* false until the first resampled run */
+static uint64_t mister_audio_sent;       /* frames the client actually sent     */
+static uint32_t mister_audio_ref_frame;  /* displayed-frame count when armed    */
+static uint32_t mister_audio_seen_frame; /* displayed-frame count last measured */
+static double   mister_audio_drift;      /* last measurement, for the log       */
+static bool     mister_audio_armed;
 
 static void    *mister_menu_frame;
 static unsigned mister_menu_width;
@@ -1080,6 +1127,14 @@ static void mister_init(settings_t *settings, enum retro_pixel_format pix_fmt)
    else
       gmw_set_input_caps(0);
 
+   /* Permission for the core to end a silent session, not the mechanism: the
+    * keepalives go out either way, since an older core times out regardless
+    * and there is no way to tell the two apart from here.
+    *
+    * Kept out of gmw_set_input_caps, which would tie it to whether the user
+    * wants MiSTer controllers. The client ORs both into one caps byte. */
+   gmw_set_keepalive(settings->bools.mister_allow_idle_timeout ? 1 : 0);
+
    /* All of these ride CMD_INIT and must precede it. */
    if (codec == MISTER_CODEC_NLC)
    {
@@ -1149,8 +1204,26 @@ static void mister_init(settings_t *settings, enum retro_pixel_format pix_fmt)
    mister_st.connected       = true;
 
 
-   mister_st.input_caps      = settings->bools.mister_use_inputs
-      ? gmw_get_input_caps() : 0;
+   /* input_caps is zeroed when MiSTer controllers are off, so the grant is
+    * reported from the byte itself. */
+   {
+      uint8_t granted = gmw_get_input_caps();
+
+      mister_st.input_caps   = settings->bools.mister_use_inputs ? granted : 0;
+
+      if (!settings->bools.mister_allow_idle_timeout)
+         MISTER_INFO("Allow Idle Timeout is off, so the core will hold this "
+                    "session and the last frame on the CRT even if RetroArch "
+                    "stops sending.\n");
+      else if (granted & GMW_CAP_KEEPALIVE)
+         MISTER_INFO("Idle timeout granted, so the core will free the CRT if "
+                    "this session goes quiet.\n");
+      else
+         /* Pre-v2 cores drop the caps byte, and time out silent sessions
+          * regardless. */
+         MISTER_INFO("Idle timeout was requested but not granted; this core "
+                    "is older than v2 and drops the capability byte.\n");
+   }
 
    /* Name the core. A log covering several sessions is otherwise a set of
     * resolutions with nothing to attach them to, and which core produced which
@@ -1496,6 +1569,38 @@ static void mister_apply_mode(video_driver_state_t *video_st)
       mister_frame_period_usec = (vfreq > 1.0)
          ? (retro_time_t)(1000000.0 / vfreq) : 0;
       mister_frame_end_usec    = 0;
+
+      /* The core's vga_frame is its vblank counter, and an interlaced mode
+       * ticks it per field (rtl/vga.v) - the same rate the doubled vfreq above
+       * carries, so one figure covers both scan modes. A new modeline means a
+       * fresh FIFO prefill on the core side, so the servo starts over:
+       * disarmed here, re-armed by the first flush the core accepts. */
+      {
+         uint32_t rate = mister_audio_rate(
+               config_get_ptr()->uints.audio_output_sample_rate);
+
+         if (mister_audio_lock)
+            slock_lock(mister_audio_lock);
+
+         mister_audio_spf   = (rate && vfreq > 1.0) ? rate / vfreq : 0.0;
+         mister_audio_armed = false;
+         mister_audio_ratio = 1.0;
+         mister_audio_phase = 0.0;
+         mister_audio_drift = 0.0;
+         mister_audio_sent  = 0;
+         mister_audio_hold_valid = false;
+
+         /* See the note on the constant. */
+         mister_audio_watermark = (mister_audio_spf > 1.0)
+            ? (size_t)mister_audio_spf : MISTER_AUDIO_PACKET_FRAMES;
+         if (mister_audio_watermark < MISTER_AUDIO_WATERMARK_MIN)
+            mister_audio_watermark = MISTER_AUDIO_WATERMARK_MIN;
+         if (mister_audio_watermark > MISTER_AUDIO_PACKET_FRAMES)
+            mister_audio_watermark = MISTER_AUDIO_PACKET_FRAMES;
+
+         if (mister_audio_lock)
+            slock_unlock(mister_audio_lock);
+      }
    }
    mister_st.blits_since_mode = 0;
    mister_st.warned_no_echo   = false;
@@ -2352,6 +2457,23 @@ void mister_draw(video_driver_state_t *video_st, const void *data,
 
    mister_st.stat_frames++;
 
+   /* Close off a no-frame stretch the sender reported. Stamped for every frame
+    * the driver is given, sent or not: this times the core producing frames,
+    * not us sending them. */
+   {
+      retro_time_t _now = cpu_features_get_time_usec();
+
+      if (mister_st.draw_gap_open)
+      {
+         mister_st.draw_gap_open = false;
+         MISTER_WARN("frames again, after %llu ms with none. Nothing was "
+                     "asked of this driver for that stretch, so the gap is "
+                     "upstream of it - the core, or the frame loop.\n",
+               (unsigned long long)((_now - mister_st.last_draw_usec) / 1000));
+      }
+      mister_st.last_draw_usec = _now;
+   }
+
    /* There is deliberately no automatic teardown-and-reconnect here. One used
     * to sit at this point, driven by the frameEcho stall test in the blit
     * path, and on hardware it rebuilt a session the core log showed was
@@ -2689,13 +2811,32 @@ static void mister_telemetry(void)
          (unsigned long long)mister_st.stat_dropped[MISTER_STALL_SENDER_BUSY],
          (unsigned long long)mister_st.stat_audio_frames,
          (unsigned long long)(mister_st.stat_audio_drop_overrun
-                            + mister_st.stat_audio_drop_nobuf
-                            + mister_st.stat_audio_drop_clamp),
+                            + mister_st.stat_audio_drop_nobuf),
 
          mister_status.frame, mister_status.frameEcho,
          mister_status.vramSynced, mister_status.vramEndFrame,
          mister_status.vramQueue, mister_status.vgaFrameskip,
          drops[0] ? " | not sent: " : "", drops);
+
+   /* Where the rate servo has got to. drift is how many sample frames behind
+    * the core's consumption we are; correction is what the resampler is doing
+    * about it. Drift growing while the correction sits still means the servo
+    * is not running; a correction pinned at the limit means the clocks are
+    * further apart than it can cover. */
+   if (mister_audio_armed)
+   {
+      double drift = mister_audio_drift;
+      double ratio = mister_audio_ratio;
+
+      MISTER_PACE("  audio clock: drift %+.1f frames (%+.1f ms), "
+                  "correction %+.3f%%, %.1f expected per frame\n",
+            drift,
+            (mister_audio_spf > 1.0 && mister_frame_period_usec > 0)
+               ? drift * (double)mister_frame_period_usec
+                       / (mister_audio_spf * 1000.0) : 0.0,
+            (ratio - 1.0) * 100.0,
+            mister_audio_spf);
+   }
 
    /* Mean microseconds per blit in each segment, so a frame rate that is not
     * keeping up can be attributed rather than guessed at. readback is the GPU
@@ -2827,8 +2968,14 @@ bool mister_poll_ps2(mister_ps2_state_t *out)
  * held only for the copy out, not for the send. */
 static void mister_audio_flush(void)
 {
-   uint16_t bytes;
-   char    *dst;
+   uint16_t       bytes;
+   char          *dst;
+   size_t         take;
+   gmw_fpgaStatus live;
+
+   /* The client's own copy, not the shared mister_status: the same field
+    * CmdAudio tests, read on the thread that is about to call it. */
+   gmw_getStatus(&live);
 
    if (mister_audio_lock)
       slock_lock(mister_audio_lock);
@@ -2840,33 +2987,89 @@ static void mister_audio_flush(void)
       return;
    }
 
-   /* Deliberately not gated on the cached status.audio here. That copy is only
-    * refreshed inside the blit path, so while frames are not going out it is
-    * both stale and usually zero - which silently threw the audio away for the
-    * whole of the last two hardware runs. CmdAudio checks the live flag itself
-    * before it sends anything, so there is nothing to save by guessing. */
-   /* The wire carries the length in 16 bits, so the staging buffer must never
-    * hold more than 16383 stereo frames. MISTER_AUDIO_MAX_FRAMES is 8192 and
-    * this is here so raising it cannot silently wrap the length. */
-   if (mister_audio_frames > 0xffff / (2 * sizeof(int16_t)))
-   {
-      mister_st.stat_audio_drop_clamp +=
-         mister_audio_frames - (0xffff / (2 * sizeof(int16_t)));
-      mister_audio_frames = 0xffff / (2 * sizeof(int16_t));
-   }
+   /* Deliberately not gated on status.audio. CmdAudio checks the live flag
+    * itself, so gating here only risks throwing the sound away on a stale
+    * copy. The flag is read only to decide what counts as delivered.
+    *
+    * One packet carries at most the core's audio region. Any tail stays staged
+    * for the next flush rather than following straight after: the core points
+    * every CmdAudio at the same DDR offset, so a second packet arriving before
+    * the FPGA has drained the first would overwrite it. */
+   take = mister_audio_frames;
+   if (take > MISTER_AUDIO_PACKET_FRAMES)
+      take = MISTER_AUDIO_PACKET_FRAMES;
 
-   bytes = (uint16_t)(mister_audio_frames * 2 * sizeof(int16_t));
+   bytes = (uint16_t)(take * 2 * sizeof(int16_t));
    dst   = gmw_get_pBufferAudio();
+
+   /* Arm before the packet below is counted, not after: arming zeroes the
+    * running total, so arming afterwards would discard the frames it had just
+    * counted and start a packet behind. Zero drift from here holds the core's
+    * FIFO at whatever its one-shot prefill left in it, which is the only level
+    * we can know about and the only one that costs no latency. */
+   if (live.audio && mister_audio_spf > 1.0 && !mister_audio_armed)
+   {
+      mister_audio_ref_frame  = live.frame;
+      mister_audio_seen_frame = live.frame;
+      mister_audio_sent       = 0;
+      mister_audio_drift      = 0.0;
+      mister_audio_ratio      = 1.0;
+      mister_audio_armed      = true;
+   }
 
    if (dst)
    {
       memcpy(dst, mister_audio_buf, bytes);
-      mister_st.stat_audio_frames += mister_audio_frames;
+
+      /* Only count what the client will actually put on the wire. CmdAudio
+       * returns without sending while the core has audio off, which it does
+       * until the first blit lands. The servo below would believe it too. */
+      if (live.audio)
+      {
+         mister_st.stat_audio_frames += take;
+         mister_audio_sent           += take;
+      }
    }
    else
-      mister_st.stat_audio_drop_nobuf += mister_audio_frames;
+      mister_st.stat_audio_drop_nobuf += take;
 
-   mister_audio_frames = 0;
+   /* Keep the tail, if any, for the next flush. */
+   mister_audio_frames -= take;
+   if (mister_audio_frames)
+      memmove(mister_audio_buf, mister_audio_buf + take * 2,
+            mister_audio_frames * 2 * sizeof(int16_t));
+
+   /* Re-measure against the core's displayed-frame counter. Only when that
+    * counter has moved: it stands still while video is stalled, and servoing
+    * on a frozen clock drags the rate the wrong way. Both terms are running
+    * totals, so the measurement is right again once blits resume. */
+   if (mister_audio_armed && live.frame != mister_audio_seen_frame)
+   {
+      /* Unsigned difference, so a counter wrap cannot become a two-billion
+       * frame correction. */
+      uint32_t elapsed = live.frame - mister_audio_ref_frame;
+      double   want    = (double)elapsed * mister_audio_spf;
+      double   drift   = want - (double)mister_audio_sent;
+      double   ratio;
+
+      mister_audio_seen_frame = live.frame;
+      mister_audio_drift      = drift;
+
+      /* drift is already the integral of the rate error, so a proportional
+       * term is enough. Two seconds leaves a few milliseconds of steady-state
+       * lag against a 0.23% error - well inside the core's FIFO - and is slow
+       * enough to ignore a core whose sound is not frame-locked. */
+      ratio = 1.0 + drift / (mister_audio_spf * MISTER_AUDIO_SERVO_FRAMES);
+
+      /* Hard limits, so a pause, a rewind or a jumping counter cannot turn
+       * this into an audible pitch bend. */
+      if (ratio > 1.0 + MISTER_AUDIO_SERVO_LIMIT)
+         ratio = 1.0 + MISTER_AUDIO_SERVO_LIMIT;
+      else if (ratio < 1.0 - MISTER_AUDIO_SERVO_LIMIT)
+         ratio = 1.0 - MISTER_AUDIO_SERVO_LIMIT;
+
+      mister_audio_ratio = ratio;
+   }
 
    /* Released before the send: the copy out is all the frame loop has to wait
     * for, and holding it across a datagram would put network time on the
@@ -2929,12 +3132,95 @@ void mister_audio_push(const float *samples, size_t frames)
 
    /* The MiSTer takes signed 16-bit stereo whatever the host driver uses, so
     * convert here rather than depending on the host format. */
-   convert_float_to_s16(mister_audio_buf + mister_audio_frames * 2,
-         samples, frames * 2);
-   mister_audio_frames += frames;
+   if (!frames)
+   {
+      /* The clamp above took the lot. The resampling branch below would read
+       * its scratch buffer before writing it. */
+   }
+   else if (mister_audio_ratio == 1.0)
+   {
+      /* Nothing to correct, and the case until the servo has a measurement. */
+      convert_float_to_s16(mister_audio_buf + mister_audio_frames * 2,
+            samples, frames * 2);
+      mister_audio_frames += frames;
+   }
+   else if (!mister_audio_scratch
+         && !(mister_audio_scratch = (int16_t*)malloc(MISTER_AUDIO_MAX_BYTES)))
+   {
+      /* No scratch, no correction: uncorrected is a slow drift, dropping the
+       * samples is silence. */
+      convert_float_to_s16(mister_audio_buf + mister_audio_frames * 2,
+            samples, frames * 2);
+      mister_audio_frames += frames;
+   }
+   else
+   {
+      /* Resample by the servo's ratio. Convert first, so clamping and rounding
+       * stay identical to the straight path, then walk the result with a
+       * fractional step, interpolating between neighbours.
+       *
+       * step is input frames per output frame: above 1:1 the walk occasionally
+       * emits two samples from one interval, below it occasionally skips one.
+       * mister_audio_hold and mister_audio_phase carry the position across
+       * calls, so the interpolation does not restart every buffer. */
+      const double step = 1.0 / mister_audio_ratio;
+      double       phase = mister_audio_phase;
+      int16_t      h0    = mister_audio_hold[0];
+      int16_t      h1    = mister_audio_hold[1];
+      int16_t     *out   = mister_audio_buf + mister_audio_frames * 2;
+      size_t       room  = MISTER_AUDIO_MAX_FRAMES - mister_audio_frames;
+      size_t       i     = 0;
+      size_t       n     = 0;
+
+      convert_float_to_s16(mister_audio_scratch, samples, frames * 2);
+
+      /* First buffer through here has no previous frame to interpolate from,
+       * and a zeroed hold would emit a sample of silence. Start on the
+       * input. */
+      if (!mister_audio_hold_valid)
+      {
+         h0    = mister_audio_scratch[0];
+         h1    = mister_audio_scratch[1];
+         phase = 0.0;
+         mister_audio_hold_valid = true;
+      }
+
+      while (i < frames)
+      {
+         if (phase < 1.0)
+         {
+            const int16_t *in = mister_audio_scratch + i * 2;
+
+            if (n >= room)
+               break;
+
+            out[n * 2]     = (int16_t)(h0 + (in[0] - h0) * phase);
+            out[n * 2 + 1] = (int16_t)(h1 + (in[1] - h1) * phase);
+            n++;
+            phase += step;
+         }
+         else
+         {
+            h0     = mister_audio_scratch[i * 2];
+            h1     = mister_audio_scratch[i * 2 + 1];
+            phase -= 1.0;
+            i++;
+         }
+      }
+
+      /* Ran out of staging room mid-buffer; count the rest as lost, same as
+       * the straight path's clamp. */
+      if (i < frames)
+         mister_st.stat_audio_drop_overrun += frames - i;
+
+      mister_audio_phase   = phase;
+      mister_audio_hold[0] = h0;
+      mister_audio_hold[1] = h1;
+      mister_audio_frames += n;
+   }
 
    {
-      bool wake = mister_audio_frames >= MISTER_AUDIO_WATERMARK;
+      bool wake = mister_audio_frames >= mister_audio_watermark;
 
       if (mister_audio_lock)
          slock_unlock(mister_audio_lock);
@@ -3010,6 +3296,23 @@ static void mister_keepalive(void)
 
    now = cpu_features_get_time_usec();
 
+   /* The frame loop has stopped handing us anything. This runs on the sender
+    * thread, so it is the only place that can notice. Once per stretch;
+    * mister_draw() reports the end and the length. */
+   if (      mister_st.modeline_active
+         && mister_st.last_draw_usec
+         && !mister_st.draw_gap_open
+         && mister_frame_period_usec > 0
+         && (now - mister_st.last_draw_usec)
+               > MISTER_NOFRAME_PERIODS * mister_frame_period_usec)
+   {
+      mister_st.draw_gap_open = true;
+      MISTER_WARN("no frame has reached this driver for %llu ms. The stream "
+                  "is healthy and the sender is idle - whatever has stopped "
+                  "is ahead of us.\n",
+            (unsigned long long)((now - mister_st.last_draw_usec) / 1000));
+   }
+
    /* Nothing here looks at whether a frame was drawn. Blits stamp
     * last_keepalive themselves, so a busy loop naturally never reaches the
     * send below, and a loop that has stopped - which is the whole reason this
@@ -3047,10 +3350,6 @@ void mister_close(void)
       if (mister_st.stat_audio_drop_nobuf)
          MISTER_WARN("  audio lost, the client had no buffer: %llu frames.\n",
                (unsigned long long)mister_st.stat_audio_drop_nobuf);
-      if (mister_st.stat_audio_drop_clamp)
-         MISTER_WARN("  audio lost to the 16-bit length ceiling: %llu "
-                     "frames.\n",
-               (unsigned long long)mister_st.stat_audio_drop_clamp);
 
       for (i = 1; i < MISTER_STALL_LAST; i++)
          if (mister_st.stat_dropped[i])
@@ -3100,8 +3399,21 @@ void mister_close(void)
    memset(&mister_job, 0, sizeof(mister_job));
 
    free(mister_audio_buf);
-   mister_audio_buf    = NULL;
-   mister_audio_frames = 0;
+   free(mister_audio_scratch);
+   mister_audio_buf     = NULL;
+   mister_audio_scratch = NULL;
+   mister_audio_frames  = 0;
+
+   /* The servo measures against the core's frame counter, which a new session
+    * restarts, so none of it may be carried across one. */
+   mister_audio_armed      = false;
+   mister_audio_hold_valid = false;
+   mister_audio_ratio      = 1.0;
+   mister_audio_phase      = 0.0;
+   mister_audio_drift      = 0.0;
+   mister_audio_sent       = 0;
+   mister_audio_spf        = 0.0;
+   mister_audio_watermark  = MISTER_AUDIO_PACKET_FRAMES;
 
    mister_menu_frame = NULL;
    mister_menu_prev  = false;

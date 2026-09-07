@@ -10731,6 +10731,7 @@ unsigned menu_displaylist_build_list(
                /* Wire format: set once for a link, then left alone. */
                {MENU_ENUM_LABEL_MISTER_INTERLACED_FB,       PARSE_ONLY_BOOL},
                {MENU_ENUM_LABEL_MISTER_MTU,                 PARSE_ONLY_UINT},
+               {MENU_ENUM_LABEL_MISTER_ALLOW_IDLE_TIMEOUT,  PARSE_ONLY_BOOL},
                {MENU_ENUM_LABEL_MISTER_JOYPAD_PORT_BASE,    PARSE_ONLY_UINT},
                {MENU_ENUM_LABEL_MISTER_JOYPAD_HOST_DRIVER,  PARSE_ONLY_STRING},
             };

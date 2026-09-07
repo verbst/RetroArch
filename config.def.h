@@ -241,6 +241,9 @@
 
 #define DEFAULT_MISTER_RUMBLE true
 
+/* On: the MiSTer releases the CRT if this process dies. */
+#define DEFAULT_MISTER_ALLOW_IDLE_TIMEOUT true
+
 /* Empty means "the platform default joypad driver". */
 #define DEFAULT_MISTER_JOYPAD_HOST_DRIVER ""
 

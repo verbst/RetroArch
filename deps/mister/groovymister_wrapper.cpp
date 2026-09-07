@@ -20,8 +20,8 @@ GroovyMister* gmw;
 int gmw_inputsBinded;
 
 // The pre-init setters (caps, NLC knobs, auto-reconnect, log level) must work
-// before gmw_init/gmw_bindInputs have created the singleton — create it on
-// demand so call ordering never matters.
+// before gmw_init/gmw_bindInputs have created the singleton, so it is created
+// on demand and call ordering never matters.
 static GroovyMister* gmw_instance(void)
 {
 	if (gmw == NULL)
@@ -245,13 +245,21 @@ MODULE_API_GMW void gmw_set_input_caps(uint8_t caps)
 	gmw_instance()->setInputCaps(caps);
 }
 
+// Pre-CmdInit setter, so it uses gmw_instance() to create the client if needed, matching
+// gmw_set_input_caps. Kept separate from the input caps: they are independent opt-ins and
+// the client ORs them into the CMD_INIT caps byte itself.
+MODULE_API_GMW void gmw_set_keepalive(uint8_t on)
+{
+	gmw_instance()->setKeepAlive(on);
+}
+
 MODULE_API_GMW uint8_t gmw_get_input_caps(void)
 {
 	return (gmw != NULL) ? gmw->getInputCaps() : 0;
 }
 
-// Internally guarded (connected + inputs bound + GMW_CAP_RUMBLE negotiated) —
-// deliberately quiet otherwise: the pad layer may push motor state at any time.
+// Internally guarded (connected, inputs bound, GMW_CAP_RUMBLE negotiated) and
+// deliberately quiet otherwise, since the pad layer may push motor state at any time.
 MODULE_API_GMW void gmw_send_rumble(uint8_t player, uint8_t strong, uint8_t weak)
 {
 	if (gmw != NULL)
